@@ -1,4 +1,7 @@
-use std::{fs, path::{Path, PathBuf}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use eframe::egui;
 use serde::{Deserialize, Serialize};
@@ -35,7 +38,12 @@ impl Launcher {
             .unwrap_or_default();
         let save_file_path = data_dir.join("saves").join("skater.p");
 
-        Self { settings, settings_path, save_file_path, message: None }
+        Self {
+            settings,
+            settings_path,
+            save_file_path,
+            message: None,
+        }
     }
 
     fn choose_source(&mut self) {
@@ -47,7 +55,8 @@ impl Launcher {
         {
             self.settings.source_path = Some(path);
             self.persist_settings();
-            self.message = Some("Source selected. The game runtime is planned for a later phase.".into());
+            self.message =
+                Some("Source selected. The game runtime is planned for a later phase.".into());
         }
     }
 
@@ -61,19 +70,26 @@ impl Launcher {
     }
 
     fn source_name(&self) -> String {
-        self.settings.source_path.as_ref()
+        self.settings
+            .source_path
+            .as_ref()
             .and_then(|path| path.file_name())
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| "No game source selected".into())
     }
 
     fn source_exists(&self) -> bool {
-        self.settings.source_path.as_ref().is_some_and(|path| path.is_file())
+        self.settings
+            .source_path
+            .as_ref()
+            .is_some_and(|path| path.is_file())
     }
 
     fn open_save_location(&mut self) {
         let folder = self.save_file_path.parent().unwrap_or(Path::new("."));
-        if let Err(error) = fs::create_dir_all(folder).and_then(|_| open::that(folder).map_err(std::io::Error::other)) {
+        if let Err(error) = fs::create_dir_all(folder)
+            .and_then(|_| open::that(folder).map_err(std::io::Error::other))
+        {
             self.message = Some(format!("Could not open save folder: {error}"));
         }
     }
@@ -149,7 +165,10 @@ impl eframe::App for Launcher {
 fn card(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::default()
         .fill(egui::Color32::from_rgb(24, 31, 33))
-        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(43, 55, 56)))
+        .stroke(egui::Stroke::new(
+            1.0_f32,
+            egui::Color32::from_rgb(43, 55, 56),
+        ))
         .corner_radius(egui::CornerRadius::same(9))
         .inner_margin(egui::Margin::same(18))
         .show(ui, add_contents);
@@ -163,6 +182,9 @@ fn main() -> eframe::Result<()> {
             .with_title(APP_NAME),
         ..Default::default()
     };
-    eframe::run_native(APP_NAME, options, Box::new(|_cc| Ok(Box::new(Launcher::new()))))
+    eframe::run_native(
+        APP_NAME,
+        options,
+        Box::new(|_cc| Ok(Box::new(Launcher::new()))),
+    )
 }
-
