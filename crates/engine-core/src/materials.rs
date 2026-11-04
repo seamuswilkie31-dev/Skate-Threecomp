@@ -117,15 +117,27 @@ fn read_parameter_groups(blob: &[u8]) -> Result<Vec<Material>, String> {
     let group_end = table
         .checked_add(count * 12)
         .ok_or("Material group table size overflow.")?;
+    let aligned_group_end = group_end
+        .checked_add(15)
+        .map(|end| end & !15)
+        .ok_or("Material group table alignment overflow.")?;
     let parameter_end = parameter_base
         .checked_add(parameter_count * 32)
         .ok_or("Material parameter table size overflow.")?;
     if table != 20
-        || group_end != parameter_base
+        || aligned_group_end != parameter_base
         || parameter_end != string_base
         || string_base > blob.len()
     {
         return Err("Material parameter tables overlap or exceed their object.".into());
+    }
+    // Neighbor presentation arenas use zero-filled alignment of the parameter
+    // table to 16 bytes: observed group counts 6/31/16 leave 4/8/12 bytes.
+    if blob[group_end..parameter_base]
+        .iter()
+        .any(|&byte| byte != 0)
+    {
+        return Err("Material parameter table alignment padding is not zero.".into());
     }
     let mut expected_start = parameter_base;
     let mut materials = Vec::with_capacity(count);
@@ -313,6 +325,37 @@ mod tests {
         }
         blob
     }
+    fn aligned_parameters(groups: usize, padding: usize) -> Vec<u8> {
+        let group_end = 20 + groups * 12;
+        let parameter_base = group_end + padding;
+        let string_base = parameter_base + groups * 32;
+        let mut blob = vec![0; string_base + 5];
+        for (offset, value) in [
+            (0, groups as u32),
+            (4, groups as u32),
+            (8, 20),
+            (12, parameter_base as u32),
+            (16, string_base as u32),
+        ] {
+            put(&mut blob, offset, value);
+        }
+        for index in 0..groups {
+            let record = parameter_base + index * 32;
+            put(&mut blob, 20 + index * 12, 1);
+            put(&mut blob, 28 + index * 12, record as u32);
+            for (offset, value) in [
+                (0, string_base as u32),
+                (4, 0xffff),
+                (8, 0xdeadbeef),
+                (12, 0xdeadc0de),
+                (20, index as u32 + 1),
+            ] {
+                put(&mut blob, record + offset, value);
+            }
+        }
+        blob[string_base..].copy_from_slice(b"Name\0");
+        blob
+    }
     fn arena_fixture() -> Vec<u8> {
         let mut bytes = vec![0; 544];
         bytes[..24].copy_from_slice(b"\x89RW4xb2\0\r\n\x1a\n\x01\x20\x04\x00454\x00000\x00");
@@ -379,6 +422,27 @@ mod tests {
         let tokens = read_reference_tokens(&references(), &groups).unwrap();
         assert_eq!(tokens.get(&0x800009), Some(&0));
         assert!(!tokens.contains_key(&0x800000));
+    }
+    #[test]
+    fn accepts_only_zero_padding_to_the_next_16_byte_parameter_boundary() {
+        for (count, padding) in [(1, 0), (2, 4), (3, 8), (4, 12)] {
+            let groups = read_parameter_groups(&aligned_parameters(count, padding)).unwrap();
+            assert_eq!(groups.len(), count);
+            for (index, material) in groups.iter().enumerate() {
+                assert_eq!(material.key, index as u64 + 1);
+            }
+        }
+        for padding in [0, 3, 5, 8, 20] {
+            assert!(read_parameter_groups(&aligned_parameters(2, padding)).is_err());
+        }
+        for padding_byte in 44..48 {
+            let mut blob = aligned_parameters(2, 4);
+            blob[padding_byte] = 1;
+            assert!(read_parameter_groups(&blob).is_err());
+        }
+        let mut truncated = aligned_parameters(2, 4);
+        truncated.truncate(46);
+        assert!(read_parameter_groups(&truncated).is_err());
     }
     #[test]
     fn rejects_offsets_counts_unterminated_names_and_wrong_parameter_types() {

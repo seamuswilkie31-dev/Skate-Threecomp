@@ -28,6 +28,7 @@
 - [x] Index the observed SFIL v3 block and segment layout with exact member bounds.
 - [x] Decode raw and five-byte-header RefPack segments in memory with explicit size budgets.
 - [x] Decode one observed static float3/28-byte vertex and uint16 triangle-list profile.
+- [x] Expand to six exact observed declarations with 20/24/28/32/36-byte strides and half2/half4 first UVs.
 - [x] Decode the first half-float diffuse UV set and validate draw-to-material associations.
 - [x] Decode narrow tiled BC1 and RGB565 base levels with verified byte order and channel profiles.
 - [ ] Investigate other geometry layouts, textures, transforms, and full scene assembly.
@@ -54,6 +55,7 @@
 - [ ] Improve full-body collision, ceiling contact, sliding, and original game collision-format support.
 - [x] Inspect observed 2D texture descriptors and Xenos fetch metadata.
 - [x] Bind four local diffuse textures to six sample meshes and preview a decoded lightmap.
+- [x] Assemble six selected neighboring static batches with one shared render/collision placement (64 meshes, 3,481 render triangles, 32 textured meshes).
 - [ ] Resolve the remaining material keys, packed base tails, other formats, and mip levels.
 - [ ] Verify lightmap coordinates, original lighting, scene transforms, and complete scene assembly.
 

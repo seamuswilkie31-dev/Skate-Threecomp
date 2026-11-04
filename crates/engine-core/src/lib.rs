@@ -15,6 +15,7 @@ pub mod materials;
 pub mod rails;
 mod rgb565;
 pub mod rw4;
+pub mod scene;
 pub mod skating;
 pub mod texture;
 pub mod tricks;

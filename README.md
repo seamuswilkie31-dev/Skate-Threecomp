@@ -71,6 +71,10 @@ Save data is stored under the platform's local application data directory:
 - macOS: `~/Library/Application Support/com.Threecomp.Skate Threecomp/saves/skater.p`
 - Linux: `$XDG_DATA_HOME/Threecomp/Skate Threecomp/saves/skater.p` (or `~/.local/share/...`)
 
+## Neighborhood preview
+
+**Load neighborhood preview** now assembles six selected Downtown batches in one shared placement: 64 meshes, 5,091 vertices, and 3,481 triangles. Ten decoded diffuse textures cover 32 meshes; the rest remain plain. It supports the same **Place on mesh** action and prototype collision. This is a partial, scaled neighborhood preview; see [source batches and limits](docs/NEIGHBORHOOD.md). The inspector's `--neighborhood-sample` option reports the selected batches, bounds, geometry/collision counts, texture coverage, and optional warnings without exporting assets.
+
 ## Build
 
 Install the stable Rust toolchain, then run from the repository root:

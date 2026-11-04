@@ -26,7 +26,10 @@ impl TextureSet {
     pub fn from_assets(assets: &[threecomp_engine_core::texture::TextureAsset]) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let mut layers = vec![vec![255; 64 * 64 * 4]];
-        for asset in assets.iter().take(4) {
+        for asset in assets
+            .iter()
+            .take(threecomp_engine_core::scene::MAX_TEXTURES)
+        {
             let image = &asset.pixels;
             let mut layer = vec![0; 64 * 64 * 4];
             for y in 0..64 {
@@ -441,36 +444,61 @@ mod tests {
     #[test]
     #[ignore = "Requires a native GPU and THREECOMP_TEST_ISO pointing to a local retail disc image"]
     fn retail_geometry_sample_draws_on_native_gpu() {
+        render_retail_geometry(false);
+    }
+    #[test]
+    #[ignore = "Requires a native GPU and THREECOMP_TEST_ISO pointing to a local retail disc image"]
+    fn retail_neighborhood_draws_on_native_gpu() {
+        render_retail_geometry(true);
+    }
+    fn render_retail_geometry(neighborhood: bool) {
         pollster::block_on(async {
             let path = std::env::var_os("THREECOMP_TEST_ISO")
                 .expect("Set THREECOMP_TEST_ISO to your local disc image");
-            let sample =
-                threecomp_engine_core::geometry::load_retail_sample(std::path::Path::new(&path))
-                    .unwrap();
+            let (sample, assets, layers) = if neighborhood {
+                let patch = threecomp_engine_core::scene::load_retail_neighborhood(
+                    std::path::Path::new(&path),
+                )
+                .unwrap();
+                assert_eq!(patch.geometry.meshes.len(), 64);
+                (patch.geometry, patch.assets, patch.mesh_layers)
+            } else {
+                let sample = threecomp_engine_core::geometry::load_retail_sample(
+                    std::path::Path::new(&path),
+                )
+                .unwrap();
+                let assets = threecomp_engine_core::texture::load_retail_diffuse_textures(
+                    std::path::Path::new(&path),
+                )
+                .unwrap();
+                let bindings = threecomp_engine_core::materials::inspect_materials(
+                    &threecomp_engine_core::geometry::load_retail_block(
+                        std::path::Path::new(&path),
+                        15,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+                let layers = sample
+                    .meshes
+                    .iter()
+                    .map(|mesh| {
+                        bindings
+                            .iter()
+                            .find(|b| b.draw_index == mesh.draw_index)
+                            .and_then(|b| b.diffuse_key)
+                            .and_then(|key| assets.iter().position(|a| a.key == key))
+                            .map_or(0, |i| i as u32 + 1)
+                    })
+                    .collect();
+                (sample, assets, layers)
+            };
             let center = (sample.min + sample.max) * 0.5;
             let extent = sample.max - sample.min;
             let scale = 2.0 / extent.x.max(extent.y).max(extent.z).max(0.001);
             let mut vertices = Vec::new();
-            let assets = threecomp_engine_core::texture::load_retail_diffuse_textures(
-                std::path::Path::new(&path),
-            )
-            .unwrap();
-            let bindings = threecomp_engine_core::materials::inspect_materials(
-                &threecomp_engine_core::geometry::load_retail_block(
-                    std::path::Path::new(&path),
-                    15,
-                )
-                .unwrap(),
-            )
-            .unwrap();
             let mut textured_meshes = 0;
-            for mesh in &sample.meshes {
-                let layer = bindings
-                    .iter()
-                    .find(|b| b.draw_index == mesh.draw_index)
-                    .and_then(|b| b.diffuse_key)
-                    .and_then(|key| assets.iter().position(|a| a.key == key))
-                    .map_or(0, |index| index as u32 + 1);
+            for (mesh, &layer) in sample.meshes.iter().zip(&layers) {
                 if layer != 0 {
                     textured_meshes += 1;
                 }
@@ -495,7 +523,7 @@ mod tests {
                 .unwrap();
             device.push_error_scope(wgpu::ErrorFilter::Validation);
             let mut renderer = Renderer::new(&device, wgpu::TextureFormat::Rgba8Unorm);
-            assert_eq!(textured_meshes, 6);
+            assert_eq!(textured_meshes, if neighborhood { 32 } else { 6 });
             renderer.set_textures(&device, &queue, Some(&TextureSet::from_assets(&assets)));
             let camera = Camera {
                 eye: [0., 0., -3., 0.],
@@ -559,7 +587,7 @@ mod tests {
             readback.unmap();
             assert!(device.pop_error_scope().await.is_none());
             eprintln!(
-                "GPU rendered {} meshes / {} triangles into {drawn} sample pixels (6 meshes with linked diffuse maps)",
+                "GPU rendered {} meshes / {} triangles into {drawn} sample pixels ({textured_meshes} meshes with linked diffuse maps)",
                 sample.meshes.len(),
                 vertices.len() / 3
             );
@@ -599,12 +627,14 @@ mod tests {
                     });
                 }
             }
+            let mut texture_layers = vec![vec![255; 64 * 64 * 4]; 10];
+            texture_layers.push(pattern);
             renderer.set_textures(
                 &device,
                 &queue,
                 Some(&TextureSet {
                     id: 99,
-                    layers: vec![vec![255; 64 * 64 * 4], pattern],
+                    layers: texture_layers,
                 }),
             );
             // Repeated UVs sample a red texture region; a farther green triangle
@@ -616,7 +646,7 @@ mod tests {
                         position: [x * z, y * z, z],
                         color: if z == 2.0 { [1.; 3] } else { color },
                         uv: [1.25, -0.75],
-                        layer: if z == 2.0 { 1 } else { 0 },
+                        layer: if z == 2.0 { 10 } else { 0 },
                     });
                 }
             }

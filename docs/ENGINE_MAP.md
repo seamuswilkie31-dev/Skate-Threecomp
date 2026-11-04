@@ -50,3 +50,7 @@ The implementation extends this project's existing XDVDFS reader using the secto
 Traversal rejects out-of-image extents, repeated directory sectors, repeated tree nodes, unsafe path components, and duplicate paths. Limits are 100,000 entries, 64 nested directory levels, 64 MiB per directory table, 128 MiB total directory-table reads, and 4,096 bytes per path. Results are sorted by disc path for reproducible reports. A limit failure returns an error rather than a partial inventory.
 
 JSON schema version 1 records `source_status`, `file_count`, `directory_count`, `total_file_bytes`, and `entries`. Each entry contains `path`, `is_directory`, `size`, and `image_offset`. Offsets are absolute byte positions within the selected image; they include its game-partition base. Directory `size` values describe table lengths rather than recursive content sizes.
+
+## Neighborhood assembly
+
+The [neighborhood preview](NEIGHBORHOOD.md) now loads six selected Downtown static batches: 64 meshes, 5,091 vertices, and 3,481 render triangles. Six exact vertex declarations cover strides 20/24/28/32/36; first UV attributes are half2 or half4. Adjacent source coordinates remain unchanged while merging and use one shared render/collision placement. Material group tables now accept verified zero padding to a 16-byte parameter boundary. Ten supported local diffuse payloads cover 32 meshes, with plain fallback for the rest. Other batches, complete scene placement/streaming, original lighting and collision, and animation remain open.

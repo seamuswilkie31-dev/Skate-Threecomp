@@ -57,7 +57,7 @@ pub fn decode_rgb565_mip0(bytes: &[u8], object_index: usize) -> Result<DecodedTe
 }
 /// Canonical key is explicitly named in the texture definition; a single
 /// observed storage flag may differ in the numeric key. Other bits are retained.
-fn texture_identity(bytes: &[u8]) -> Result<(u64, usize), String> {
+pub(crate) fn texture_identity(bytes: &[u8]) -> Result<(u64, usize), String> {
     let arena = Arena::read(bytes)?;
     let tables: Vec<_> = arena
         .objects

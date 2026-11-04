@@ -9,15 +9,18 @@ use std::{
 use threecomp_engine_core::collision::{Terrain, TriangleMesh, World};
 use threecomp_engine_core::geometry::{self, Sample};
 use threecomp_engine_core::rails::COURSE_RAILS;
+use threecomp_engine_core::scene::{self, Placement};
 use threecomp_engine_core::skating::{FIXED_DT, Input, Skater, Vec3, ground_height};
 use threecomp_engine_core::texture::{self, DecodedTexture};
 
 struct ImportedSample {
     geometry: Sample,
+    placement: Placement,
     collision: TriangleMesh,
     textures: Option<Arc<crate::graphics::TextureSet>>,
     mesh_layers: Vec<u32>,
     material_note: String,
+    source_details: String,
 }
 
 pub struct Playground {
@@ -76,18 +79,64 @@ impl Playground {
             ..Self::default()
         }
     }
-    fn load_sample(&mut self, ctx: &egui::Context) {
+    fn load_sample(&mut self, ctx: &egui::Context, neighborhood: bool) {
         let Some(source) = self.source.clone() else {
             return;
         };
         let (sender, receiver) = mpsc::channel();
         self.sample_job = Some(receiver);
-        self.sample_message = Some("Loading mesh sample…".into());
+        self.sample_message = Some(
+            if neighborhood {
+                "Loading neighborhood preview…"
+            } else {
+                "Loading mesh sample…"
+            }
+            .into(),
+        );
         let ctx = ctx.clone();
         std::thread::spawn(move || {
             let result = (|| {
+                if neighborhood {
+                    let patch = scene::load_retail_neighborhood(&source)?;
+                    let collision = TriangleMesh::from_sample_at(&patch.geometry, |p| {
+                        patch.placement.apply(p)
+                    })?;
+                    let count = patch
+                        .mesh_layers
+                        .iter()
+                        .filter(|&&layer| layer != 0)
+                        .count();
+                    let details = patch
+                        .cells
+                        .iter()
+                        .map(|c| {
+                            format!(
+                                "{} blocks {:?}: {} meshes / {} triangles",
+                                c.member, c.blocks, c.mesh_count, c.triangle_count
+                            )
+                        })
+                        .chain(patch.warnings.iter().cloned())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    return Ok(ImportedSample {
+                        collision,
+                        textures: Some(Arc::new(crate::graphics::TextureSet::from_assets(
+                            &patch.assets,
+                        ))),
+                        geometry: patch.geometry,
+                        placement: patch.placement,
+                        mesh_layers: patch.mesh_layers,
+                        material_note: format!(
+                            "{} selected cell batches · {count} meshes with diffuse maps · {} optional warnings",
+                            patch.cells.len(),
+                            patch.warnings.len()
+                        ),
+                        source_details: details,
+                    });
+                }
                 let decoded = geometry::load_retail_block(&source, 15)?;
                 let geometry = geometry::read_meshes(&decoded)?;
+                let placement = Placement::sample(&geometry)?;
                 let collision = TriangleMesh::from_sample(&geometry)?;
                 let material_data = (|| -> Result<_, String> {
                     let bindings = threecomp_engine_core::materials::inspect_materials(&decoded)?;
@@ -126,10 +175,12 @@ impl Playground {
                 };
                 Ok(ImportedSample {
                     geometry,
+                    placement,
                     collision,
                     textures,
                     mesh_layers,
                     material_note,
+                    source_details:"Downtown cPres_550_150_high.xsf block 15. Static geometry sample; original lighting and game collision data remain pending.".into(),
                 })
             })();
             let _ = sender.send(result);
@@ -249,7 +300,12 @@ impl Playground {
                 );
                 if load.clicked() {
                     load.surrender_focus();
-                    self.load_sample(ctx);
+                    self.load_sample(ctx, false);
+                }
+                let neighborhood=ui.add_enabled(self.source.is_some() && self.sample_job.is_none(),egui::Button::new("Load neighborhood preview"));
+                if neighborhood.clicked() {
+                    neighborhood.surrender_focus();
+                    self.load_sample(ctx,true);
                 }
                 if self.sample_job.is_some() {
                     ui.spinner();
@@ -290,6 +346,9 @@ impl Playground {
             }
             if let Some(message) = &self.texture_message {
                 ui.small(message);
+            }
+            if let Some(sample)=&self.sample {
+                ui.collapsing("Loaded source details",|ui| { ui.small(&sample.source_details); });
             }
             ui.label("Original test course · keyboard + controller · early movement model");
             ui.small(&self.controllers.status);
@@ -566,7 +625,7 @@ impl Playground {
                 if let Some(sample) = &self.sample {
                     let imported = sample;
                     let sample = &imported.geometry;
-                    let transform = |p: Vec3| sample.preview_position(p);
+                    let transform = |p: Vec3| imported.placement.apply(p);
                     for (mesh_index, mesh) in sample.meshes.iter().enumerate() {
                         for indices in mesh.indices.chunks_exact(3) {
                             let points = [indices[0], indices[1], indices[2]]

@@ -19,7 +19,7 @@ fn main() {
 fn run() -> Result<(), String> {
     let args: Vec<_> = env::args_os().skip(1).collect();
     if args.is_empty() || args.len() > 5 {
-        return Err("Usage: skate-threecomp-inspect <source> [--list|--json|--archives|--streams|--mesh-sample|--texture-sample|--decode-texture-sample|--material-sample|--archive <disc-path>|--prefix <archive> <member>|--stream <archive> <member>|--decode-block <archive> <member> <block-index>|--rw4-block <archive> <member> <block-index>|--texture-block <archive> <member> <block-index>]".into());
+        return Err("Usage: skate-threecomp-inspect <source> [--list|--json|--archives|--streams|--mesh-sample|--neighborhood-sample|--texture-sample|--decode-texture-sample|--material-sample|--archive <disc-path>|--prefix <archive> <member>|--stream <archive> <member>|--decode-block <archive> <member> <block-index>|--rw4-block <archive> <member> <block-index>|--texture-block <archive> <member> <block-index>]".into());
     }
     let mode = args.get(1).map(|arg| arg.to_string_lossy().into_owned());
     if mode.as_deref().is_some_and(|mode| {
@@ -34,6 +34,7 @@ fn run() -> Result<(), String> {
             "--decode-block",
             "--rw4-block",
             "--mesh-sample",
+            "--neighborhood-sample",
             "--texture-sample",
             "--texture-block",
             "--decode-texture-sample",
@@ -56,6 +57,26 @@ fn run() -> Result<(), String> {
     let path = PathBuf::from(&args[0]);
     let info = inspect_source(&path)?;
     let mut output = io::BufWriter::new(io::stdout().lock());
+    if mode.as_deref() == Some("--neighborhood-sample") {
+        let patch = threecomp_engine_core::scene::load_retail_neighborhood(&path)?;
+        let collision =
+            threecomp_engine_core::collision::TriangleMesh::from_sample_at(&patch.geometry, |p| {
+                patch.placement.apply(p)
+            })?;
+        let textured = patch.mesh_layers.iter().filter(|&&layer| layer > 0).count();
+        let cells:Vec<_>=patch.cells.iter().map(|c|serde_json::json!({"member":c.member,"blocks":c.blocks,"mesh_count":c.mesh_count,"triangle_count":c.triangle_count})).collect();
+        let report = serde_json::json!({"schema_version":1,"partial_neighborhood":true,"cell_count":patch.cells.len(),"cells":cells,
+            "mesh_count":patch.geometry.meshes.len(),"vertex_count":patch.geometry.meshes.iter().map(|m|m.positions.len()).sum::<usize>(),
+            "triangle_count":patch.geometry.meshes.iter().map(|m|m.indices.len()/3).sum::<usize>(),
+            "bounds_min":[patch.geometry.min.x,patch.geometry.min.y,patch.geometry.min.z],"bounds_max":[patch.geometry.max.x,patch.geometry.max.y,patch.geometry.max.z],
+            "textured_meshes":textured,"plain_meshes":patch.geometry.meshes.len()-textured,"diffuse_textures_loaded":patch.assets.len(),
+            "collision_triangle_count":collision.triangle_count(),"rideable_triangle_count":collision.rideable_count,
+            "placement":collision.placement().map(|p|[p.x,p.y,p.z]),"warnings":patch.warnings,"asset_export":false});
+        serde_json::to_writer_pretty(&mut output, &report).map_err(|e| e.to_string())?;
+        return writeln!(output)
+            .and_then(|_| output.flush())
+            .map_err(|e| e.to_string());
+    }
     if mode.as_deref() == Some("--material-sample") {
         let bytes = threecomp_engine_core::geometry::load_retail_block(&path, 15)?;
         let bindings = threecomp_engine_core::materials::inspect_materials(&bytes)?;

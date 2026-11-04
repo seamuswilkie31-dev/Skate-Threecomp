@@ -42,6 +42,12 @@ impl TriangleMesh {
         self.triangles.len()
     }
     pub fn from_sample(sample: &Sample) -> Result<Self, String> {
+        Self::from_sample_at(sample, |p| sample.preview_position(p))
+    }
+    pub fn from_sample_at(
+        sample: &Sample,
+        transform: impl Fn(Vec3) -> Vec3,
+    ) -> Result<Self, String> {
         let mut faces = Vec::new();
         for mesh in &sample.meshes {
             if mesh.indices.len() % 3 != 0 {
@@ -57,7 +63,7 @@ impl TriangleMesh {
                         .positions
                         .get(indices[i] as usize)
                         .ok_or("Collision index is out of range.")?;
-                    points[i] = sample.preview_position(p);
+                    points[i] = transform(p);
                 }
                 faces.push(points);
             }
