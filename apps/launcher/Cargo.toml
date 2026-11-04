@@ -3,6 +3,7 @@ name = "skate-threecomp-launcher"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+default-run = "skate-threecomp"
 
 [[bin]]
 name = "skate-threecomp"
