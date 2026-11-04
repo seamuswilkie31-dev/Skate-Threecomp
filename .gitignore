@@ -1,0 +1,8 @@
+/target/
+*.pdb
+*.dSYM/
+.DS_Store
+Thumbs.db
+*.iso
+*.xex
+*.p
