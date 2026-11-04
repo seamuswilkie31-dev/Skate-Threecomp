@@ -23,3 +23,7 @@ serde.workspace = true
 serde_json.workspace = true
 threecomp-engine-core = { path = "../../crates/engine-core" }
 gilrs = "0.11"
+bytemuck = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+pollster = "0.4"

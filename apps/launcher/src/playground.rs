@@ -1,6 +1,11 @@
 //! Native prototype view, rendered as projected triangles by egui's wgpu backend.
 
 use eframe::egui::{self, Color32, Pos2, Rect, Vec2};
+use std::{
+    path::PathBuf,
+    sync::mpsc::{self, Receiver, TryRecvError},
+};
+use threecomp_engine_core::geometry::{self, Sample};
 use threecomp_engine_core::skating::{FIXED_DT, Input, Skater, Vec3, ground_height};
 
 pub struct Playground {
@@ -11,6 +16,11 @@ pub struct Playground {
     controllers: crate::controllers::Controllers,
     camera: Vec3,
     target: Vec3,
+    target_format: Option<eframe::wgpu::TextureFormat>,
+    source: Option<PathBuf>,
+    sample: Option<Sample>,
+    sample_job: Option<Receiver<Result<Sample, String>>>,
+    sample_message: Option<String>,
 }
 
 impl Default for Playground {
@@ -26,11 +36,39 @@ impl Default for Playground {
             controllers: crate::controllers::Controllers::default(),
             camera,
             target,
+            target_format: None,
+            source: None,
+            sample: None,
+            sample_job: None,
+            sample_message: None,
         }
     }
 }
 
 impl Playground {
+    pub fn new(
+        target_format: Option<eframe::wgpu::TextureFormat>,
+        source: Option<PathBuf>,
+    ) -> Self {
+        Self {
+            target_format,
+            source,
+            ..Self::default()
+        }
+    }
+    fn load_sample(&mut self, ctx: &egui::Context) {
+        let Some(source) = self.source.clone() else {
+            return;
+        };
+        let (sender, receiver) = mpsc::channel();
+        self.sample_job = Some(receiver);
+        self.sample_message = Some("Loading mesh sample…".into());
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = sender.send(geometry::load_retail_sample(&source));
+            ctx.request_repaint();
+        });
+    }
     fn reset(&mut self) {
         self.skater = Skater::default();
         self.accumulator = 0.0;
@@ -41,6 +79,30 @@ impl Playground {
     }
     /// Return false when the player asks to return to the launcher.
     pub fn update(&mut self, ctx: &egui::Context) -> bool {
+        if let Some(receiver) = &self.sample_job {
+            match receiver.try_recv() {
+                Ok(result) => {
+                    match result {
+                        Ok(sample) => {
+                            self.sample_message = Some(format!(
+                                "Imported {} meshes · visual preview only, no collision",
+                                sample.meshes.len()
+                            ));
+                            self.sample = Some(sample);
+                        }
+                        Err(error) => {
+                            self.sample_message = Some(format!("Mesh sample unavailable: {error}"))
+                        }
+                    }
+                    self.sample_job = None;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    self.sample_message = Some("Mesh loader stopped before completion.".into());
+                    self.sample_job = None;
+                }
+                Err(TryRecvError::Empty) => {}
+            }
+        }
         let mut playing = true;
         egui::TopBottomPanel::top("prototype_header").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -52,7 +114,22 @@ impl Playground {
                 if ui.button("Reset (R)").clicked() {
                     self.reset();
                 }
+                if ui
+                    .add_enabled(
+                        self.source.is_some() && self.sample_job.is_none(),
+                        egui::Button::new("Load game mesh sample"),
+                    )
+                    .clicked()
+                {
+                    self.load_sample(ctx);
+                }
+                if self.sample_job.is_some() {
+                    ui.spinner();
+                }
             });
+            if let Some(message) = &self.sample_message {
+                ui.small(message);
+            }
             ui.label("Original test course · keyboard + controller · early movement model");
             ui.small(&self.controllers.status);
         });
@@ -256,7 +333,34 @@ impl Playground {
                         [234, 203, 163],
                     );
                 }
-                scene.paint(&painter);
+                if let Some(sample) = &self.sample {
+                    let span = sample.max - sample.min;
+                    let scale = 8.0 / span.x.max(span.y).max(span.z).max(0.001);
+                    let center = (sample.min + sample.max) * 0.5;
+                    let transform = |p: Vec3| {
+                        v(
+                            (p.x - center.x) * scale - 7.0,
+                            (p.y - sample.min.y) * scale + 0.02,
+                            (p.z - center.z) * scale - 2.0,
+                        )
+                    };
+                    for mesh in &sample.meshes {
+                        for indices in mesh.indices.chunks_exact(3) {
+                            let points = [indices[0], indices[1], indices[2]]
+                                .map(|i| transform(mesh.positions[i as usize]));
+                            let normal = (points[1] - points[0])
+                                .cross(points[2] - points[0])
+                                .normalized();
+                            let shade =
+                                0.35 + 0.65 * normal.dot(v(0.3, 0.8, -0.4).normalized()).abs();
+                            scene.triangle(
+                                points,
+                                [166u8, 190, 214].map(|c| (c as f32 * shade) as u8),
+                            );
+                        }
+                    }
+                }
+                scene.paint(&painter, self.target_format);
                 if !focused {
                     painter.text(
                         rect.center(),
@@ -306,6 +410,7 @@ struct Scene {
     right: Vec3,
     up: Vec3,
     faces: Vec<Face>,
+    vertices: Vec<crate::graphics::Vertex>,
 }
 impl Scene {
     fn new(rect: Rect, eye: Vec3, target: Vec3) -> Self {
@@ -318,9 +423,17 @@ impl Scene {
             right,
             up: forward.cross(right),
             faces: Vec::new(),
+            vertices: Vec::new(),
         }
     }
     fn quad(&mut self, points: [Vec3; 4], color: [u8; 3]) {
+        for index in [0, 1, 2, 0, 2, 3] {
+            let p = points[index];
+            self.vertices.push(crate::graphics::Vertex {
+                position: [p.x, p.y, p.z],
+                color: color.map(|v| v as f32 / 255.0),
+            });
+        }
         let points: Vec<_> = points
             .into_iter()
             .map(|p| {
@@ -349,6 +462,9 @@ impl Scene {
             color: Color32::from_rgb(color[0], color[1], color[2]),
             depth,
         });
+    }
+    fn triangle(&mut self, points: [Vec3; 3], color: [u8; 3]) {
+        self.quad([points[0], points[1], points[2], points[2]], color);
     }
     fn cuboid(&mut self, center: Vec3, size: Vec3, yaw: f32, color: [u8; 3]) {
         self.cuboid_rolled(center, size, yaw, 0.0, color);
@@ -387,7 +503,35 @@ impl Scene {
             );
         }
     }
-    fn paint(mut self, painter: &egui::Painter) {
+    fn paint(mut self, painter: &egui::Painter, target: Option<eframe::wgpu::TextureFormat>) {
+        if let Some(target) = target {
+            let to_array = |p: Vec3| [p.x, p.y, p.z, 0.0];
+            let scale = self.rect.width().min(self.rect.height()) * 1.8;
+            let camera = crate::graphics::Camera {
+                eye: to_array(self.eye),
+                right: to_array(self.right),
+                up: to_array(self.up),
+                forward: to_array(self.forward),
+                projection: [
+                    scale / self.rect.width().max(1.0),
+                    scale / self.rect.height().max(1.0),
+                    0.15,
+                    500.0,
+                ],
+            };
+            painter.add(egui::Shape::Callback(
+                eframe::egui_wgpu::Callback::new_paint_callback(
+                    self.rect,
+                    crate::graphics::Frame {
+                        vertices: self.vertices,
+                        camera,
+                        size: self.rect.size(),
+                        target,
+                    },
+                ),
+            ));
+            return;
+        }
         self.faces.sort_by(|a, b| b.depth.total_cmp(&a.depth));
         let scale = self.rect.width().min(self.rect.height()) * 0.9;
         let mut mesh = egui::Mesh::default();

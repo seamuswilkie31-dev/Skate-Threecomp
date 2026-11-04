@@ -8,6 +8,7 @@ mod refpack;
 pub use refpack::decode_refpack;
 mod stream;
 pub use stream::{StreamBlock, StreamIndex, StreamSegment};
+pub mod geometry;
 pub mod rw4;
 pub mod skating;
 

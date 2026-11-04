@@ -19,7 +19,7 @@ fn main() {
 fn run() -> Result<(), String> {
     let args: Vec<_> = env::args_os().skip(1).collect();
     if args.is_empty() || args.len() > 5 {
-        return Err("Usage: skate-threecomp-inspect <source> [--list|--json|--archives|--streams|--archive <disc-path>|--prefix <archive> <member>|--stream <archive> <member>|--decode-block <archive> <member> <block-index>|--rw4-block <archive> <member> <block-index>]".into());
+        return Err("Usage: skate-threecomp-inspect <source> [--list|--json|--archives|--streams|--mesh-sample|--archive <disc-path>|--prefix <archive> <member>|--stream <archive> <member>|--decode-block <archive> <member> <block-index>|--rw4-block <archive> <member> <block-index>]".into());
     }
     let mode = args.get(1).map(|arg| arg.to_string_lossy().into_owned());
     if mode.as_deref().is_some_and(|mode| {
@@ -33,6 +33,7 @@ fn run() -> Result<(), String> {
             "--stream",
             "--decode-block",
             "--rw4-block",
+            "--mesh-sample",
         ]
         .contains(&mode)
     }) {
@@ -51,6 +52,18 @@ fn run() -> Result<(), String> {
     let path = PathBuf::from(&args[0]);
     let info = inspect_source(&path)?;
     let mut output = io::BufWriter::new(io::stdout().lock());
+    if mode.as_deref() == Some("--mesh-sample") {
+        let sample = threecomp_engine_core::geometry::load_retail_sample(&path)?;
+        let report = serde_json::json!({"schema_version":1,"mesh_count":sample.meshes.len(),
+            "vertex_count":sample.meshes.iter().map(|mesh|mesh.positions.len()).sum::<usize>(),
+            "triangle_count":sample.meshes.iter().map(|mesh|mesh.indices.len()/3).sum::<usize>(),
+            "bounds_min":[sample.min.x,sample.min.y,sample.min.z],"bounds_max":[sample.max.x,sample.max.y,sample.max.z],
+            "visual_preview_only":true});
+        serde_json::to_writer_pretty(&mut output, &report).map_err(|error| error.to_string())?;
+        return writeln!(output)
+            .and_then(|_| output.flush())
+            .map_err(|error| error.to_string());
+    }
     if matches!(
         mode.as_deref(),
         Some("--stream" | "--decode-block" | "--rw4-block")

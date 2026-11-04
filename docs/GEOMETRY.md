@@ -1,0 +1,38 @@
+# First static geometry and native renderer
+
+## Evidence and source independence
+
+The new mesh reader was written from direct observations of the user's own retail-profile image. General RW4 mesh/buffer terminology was compared with [original RX2 research](https://soccergaming.com/forums/threads/fifa-11-pc-file-formats-resarch-renderware-4-5-assets.6468020/page-2); the compact type IDs and reference encoding below were investigated independently in this game. No code from Skate 3 Recompiled or other implementations was copied. The repository contains synthetic fixtures and original shaders, with no game payloads.
+
+The explicit research sample is archive `data/content/worldDIST_DownTown.big`, member `data/content/world/stream/DIST_DownTown/cPres_550_150_high.xsf`, block 15 (zero-based). The exact sample is intentionally fixed while the first loader is developed. It successfully decodes 9 meshes, 647 vertices, and 413 triangles. Original bounds are approximately `(500, 51.344, 100)` through `(600, 137.541, 200)`.
+
+## Supported narrow layout
+
+Draw objects with type `0x00EB0023` link a vertex declaration at byte 40 and a mesh object at byte 44. The observed mesh type `0x00020081` holds index-buffer and vertex-buffer object indexes. Its vertex record (`0x000200EA`) refers to a raw `0x00010031` resource via the observed `(object_index << 2) | 3` encoding; its index record (`0x000200EB`) uses a direct raw-object index. These conventions are specific to the verified profile and are not treated as universal RW4 rules.
+
+The accepted declaration (`0x000200E9`) is 84 bytes with a position at offset zero, position format word `0x002A23B9`, and observed 28-byte stride marker. The first three big-endian float32 values of each vertex provide XYZ. Other vertex attributes are retained in the source data but not decoded. The accepted index profile is a big-endian uint16 triangle list. Explicit draw ranges must be contiguous, have zero base vertex, use observed primitive value 4, and cover exactly the recorded index count. Buffer padding is excluded from geometry.
+
+All linked object types, lengths, reference indexes, finite coordinates, and triangle indexes are checked. Limits are 4,096 meshes, 1,000,000 vertices, and 3,000,000 indexes within the existing 64 MiB decoded-arena budget. Unknown layouts, topologies, transforms requiring nonzero base vertices, and invalid data return errors. This first path does not apply instance transforms or load all surrounding scene objects.
+
+## Preview behavior
+
+Select the inspected ISO in the launcher, enter the skating prototype, then click **Load game mesh sample**. Loading runs in a worker while the original course stays usable. The geometry is scaled to fit an eight-metre preview and placed left of the course. It uses a plain material with simple face shading; textures, materials, animation, and collision are absent. Do not use this preview as proof that a complete Skate 3 map has loaded. Geometry remains in memory and no extraction output is written.
+
+The inspector's `--mesh-sample` option invokes the same loader and emits counts and bounds as JSON, without exporting vertices.
+
+## Native rendering path
+
+Original WGSL shaders now project world vertices on the GPU. A dedicated offscreen RGBA8 color attachment and `Depth32Float` depth attachment use depth writes and the `Less` comparison. The camera uses a 0.15-metre near plane and 500-metre far plane. A second pipeline composites the viewport through egui's callback mechanism, preserving the existing launcher and HUD. Textures resize with the logical viewport and display scale, capped at 4,096 pixels per dimension. GPU buffers grow when needed and are reused between frames. The older projected view remains a fallback if wgpu render state is absent.
+
+## Validation
+
+Synthetic tests cover a known triangle, padding, object links, unsupported declarations/topologies, non-finite positions, truncated draw records, and invalid indexes. Native GPU tests were run explicitly on an NVIDIA GeForce RTX 5060 Ti. One verifies that a near red triangle occludes a farther green triangle submitted afterward and that the result survives compositing. The other loads the actual retail sample, submits its 413 triangles, and reads back visible geometry pixels with no wgpu validation errors. These checks do not require desktop capture or distribute game data.
+
+The GPU tests are ignored in ordinary `cargo test --workspace` runs because they require hardware, and the retail test also requires `THREECOMP_TEST_ISO` pointing to the local image. To run them on a development machine:
+
+```powershell
+$env:THREECOMP_TEST_ISO = "D:\Games\Skate 3.iso"
+cargo test -p skate-threecomp-launcher --bin skate-threecomp graphics::tests -- --ignored --nocapture
+```
+
+Manual validation of the latest UI and preview composition is still pending. Next work includes broader mesh-layout evidence, texture decoding, scene transforms, and collision geometry for actual game content.

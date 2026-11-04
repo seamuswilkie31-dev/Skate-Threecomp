@@ -27,7 +27,8 @@
 - [x] Read capped raw member prefixes through disc and archive indexes.
 - [x] Index the observed SFIL v3 block and segment layout with exact member bounds.
 - [x] Decode raw and five-byte-header RefPack segments in memory with explicit size budgets.
-- [ ] Investigate decoded RW4 object tables, geometry, and textures.
+- [x] Decode one observed static float3/28-byte vertex and uint16 triangle-list profile.
+- [ ] Investigate other geometry layouts, textures, transforms, and full scene assembly.
 - [x] Read observed Xbox 360 RW4 dictionaries and resolve bounded resource regions.
 - [ ] Verify remaining SFIL variants and codec flags as evidence becomes available.
 - Keep an evidence log for file formats and engine behaviors.
@@ -42,8 +43,10 @@
 - [x] Add native controller input with hotplugging, dead zones, and focus-safe button edges.
 - [x] Animate board flips and detect clean flip/spin landings, switch stance, scores, and simple bails.
 - [ ] Add grinds, richer character animation, and trick chains.
-- [ ] Build a depth-buffered world renderer and improve the movement/collision model.
-- [ ] Connect decoded geometry and textures to the scene.
+- [x] Build a dedicated depth-buffered 3D pass and composite it into the native launcher.
+- [x] Connect a bounded real-game mesh sample to an untextured visual preview.
+- [ ] Improve movement/collision and connect game geometry to collision surfaces.
+- [ ] Decode textures and assemble complete game scenes.
 
 ## Phase 5 — Game systems
 

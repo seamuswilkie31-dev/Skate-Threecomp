@@ -10,6 +10,8 @@ An early native skating prototype is now available. Click **Open skating prototy
 
 The prototype now accepts controller input and includes board flips, airborne spins, clean-landing scoring, switch stance, and a simple bail/recovery state. On keyboard, use **F** to flip and **Q/E** to spin after an ollie. The HUD shows controller status and the latest trick result.
 
+The prototype now uses a dedicated native 3D pass with depth testing. With the inspected retail ISO selected, click **Load game mesh sample** inside the prototype to load a small original game-geometry sample beside the course. It is an untextured visual preview, scaled for inspection, with no imported collision. The sample stays in memory. See [geometry and renderer notes](docs/GEOMETRY.md).
+
 Phase 2 provides read-only source inspection for Xbox 360 `.iso` and `.xex` files. The launcher checks the XEX2 header or the XDVDFS volume descriptor, walks the root directory tree, locates `default.xex`, and reads its execution metadata (title ID, version, base version, and media ID). It recognizes one Skate 3 retail metadata profile; this is an identifier match, not a cryptographic executable check or proof of runtime compatibility. The game executable is not loaded and Play remains disabled. See [the profile notes](docs/SUPPORTED_BUILDS.md).
 
 The `skate-threecomp-inspect` command-line tool runs the same checks without opening the launcher:
@@ -56,6 +58,8 @@ cargo run -p skate-threecomp-launcher --bin skate-threecomp-inspect -- "D:\Games
 ```
 
 This reports object types and bounded resource offsets. It does not decode object-specific geometry or textures; see [RW4 notes](docs/RW4.md).
+
+`--mesh-sample` runs the same narrow sample loader as the prototype and reports mesh, vertex, triangle, and bounding-box counts as JSON. The initial retail sample contains 9 meshes, 647 vertices, and 413 triangles.
 
 Save data is stored under the platform's local application data directory:
 

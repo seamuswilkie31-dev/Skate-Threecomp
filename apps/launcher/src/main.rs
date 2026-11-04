@@ -12,6 +12,7 @@ use threecomp_engine_core::{SourceInfo, inspect_source, inventory_disc};
 
 const APP_NAME: &str = "Skate Threecomp";
 mod controllers;
+mod graphics;
 mod playground;
 
 #[derive(Default, Serialize, Deserialize)]
@@ -27,10 +28,15 @@ struct Launcher {
     message: Option<String>,
     inventory_job: Option<Receiver<Result<String, String>>>,
     playground: Option<playground::Playground>,
+    target_format: Option<eframe::wgpu::TextureFormat>,
 }
 
 impl Launcher {
-    fn new() -> Self {
+    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let target_format = cc
+            .wgpu_render_state
+            .as_ref()
+            .map(|state| state.target_format);
         let project_dirs = directories::ProjectDirs::from("com", "Threecomp", APP_NAME);
         let config_dir = project_dirs
             .as_ref()
@@ -49,15 +55,16 @@ impl Launcher {
         let source_inspection = settings.source_path.as_deref().map(inspect_source);
 
         Self {
+            playground: std::env::args_os()
+                .any(|arg| arg == "--prototype")
+                .then(|| playground::Playground::new(target_format, settings.source_path.clone())),
             settings,
             settings_path,
             save_file_path,
             source_inspection,
             message: None,
             inventory_job: None,
-            playground: std::env::args_os()
-                .any(|arg| arg == "--prototype")
-                .then(playground::Playground::default),
+            target_format,
         }
     }
 
@@ -258,7 +265,7 @@ impl eframe::App for Launcher {
 
                 ui.add_space(22.0);
                 if ui.button("Open skating prototype").clicked() {
-                    self.playground = Some(playground::Playground::default());
+                    self.playground = Some(playground::Playground::new(self.target_format,self.settings.source_path.clone()));
                 }
                 ui.label(egui::RichText::new("Ride an original test course with keyboard movement and ollies.").size(12.0));
                 ui.add_space(10.0);
@@ -304,6 +311,6 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         APP_NAME,
         options,
-        Box::new(|_cc| Ok(Box::new(Launcher::new()))),
+        Box::new(|cc| Ok(Box::new(Launcher::new(cc)))),
     )
 }
