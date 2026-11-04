@@ -9,7 +9,7 @@ use std::{
 use threecomp_engine_core::collision::{Terrain, TriangleMesh, World};
 use threecomp_engine_core::geometry::{self, Sample};
 use threecomp_engine_core::rails::COURSE_RAILS;
-use threecomp_engine_core::scene::{self, Placement};
+use threecomp_engine_core::scene::{self, Placement, SourceEnvironment};
 use threecomp_engine_core::skating::{FIXED_DT, Input, Skater, Vec3, ground_height};
 use threecomp_engine_core::texture::{self, DecodedTexture};
 
@@ -21,6 +21,15 @@ struct ImportedSample {
     mesh_layers: Vec<u32>,
     material_note: String,
     source_details: String,
+    source_environment: Option<SourceEnvironment>,
+    enter_source: bool,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum SampleLoad {
+    Mesh,
+    Neighborhood,
+    SourceSkating,
 }
 
 pub struct Playground {
@@ -40,6 +49,8 @@ pub struct Playground {
     texture_preview: Option<egui::TextureHandle>,
     texture_message: Option<String>,
     texture_open: bool,
+    source_skating: bool,
+    recoveries: u32,
 }
 
 impl Default for Playground {
@@ -64,6 +75,8 @@ impl Default for Playground {
             texture_preview: None,
             texture_message: None,
             texture_open: false,
+            source_skating: false,
+            recoveries: 0,
         }
     }
 }
@@ -79,25 +92,34 @@ impl Playground {
             ..Self::default()
         }
     }
-    fn load_sample(&mut self, ctx: &egui::Context, neighborhood: bool) {
+    fn load_sample(&mut self, ctx: &egui::Context, request: SampleLoad) {
         let Some(source) = self.source.clone() else {
             return;
         };
         let (sender, receiver) = mpsc::channel();
         self.sample_job = Some(receiver);
         self.sample_message = Some(
-            if neighborhood {
-                "Loading neighborhood preview…"
-            } else {
-                "Loading mesh sample…"
+            match request {
+                SampleLoad::Neighborhood => "Loading neighborhood preview…",
+                SampleLoad::SourceSkating => "Loading source-scale neighborhood…",
+                SampleLoad::Mesh => "Loading mesh sample…",
             }
             .into(),
         );
         let ctx = ctx.clone();
         std::thread::spawn(move || {
             let result = (|| {
-                if neighborhood {
+                if request != SampleLoad::Mesh {
                     let patch = scene::load_retail_neighborhood(&source)?;
+                    let mut source_error = None;
+                    let source_environment = match patch.source_environment() {
+                        Ok(environment) => Some(environment),
+                        Err(error) if request == SampleLoad::SourceSkating => return Err(error),
+                        Err(error) => {
+                            source_error = Some(error);
+                            None
+                        }
+                    };
                     let collision = TriangleMesh::from_sample_at(&patch.geometry, |p| {
                         patch.placement.apply(p)
                     })?;
@@ -106,7 +128,7 @@ impl Playground {
                         .iter()
                         .filter(|&&layer| layer != 0)
                         .count();
-                    let details = patch
+                    let mut details = patch
                         .cells
                         .iter()
                         .map(|c| {
@@ -118,6 +140,9 @@ impl Playground {
                         .chain(patch.warnings.iter().cloned())
                         .collect::<Vec<_>>()
                         .join("\n");
+                    if let Some(error) = source_error {
+                        details.push_str(&format!("\nSource skating unavailable: {error}"));
+                    }
                     return Ok(ImportedSample {
                         collision,
                         textures: Some(Arc::new(crate::graphics::TextureSet::from_assets(
@@ -132,6 +157,8 @@ impl Playground {
                             patch.warnings.len()
                         ),
                         source_details: details,
+                        source_environment,
+                        enter_source: request == SampleLoad::SourceSkating,
                     });
                 }
                 let decoded = geometry::load_retail_block(&source, 15)?;
@@ -181,6 +208,8 @@ impl Playground {
                     mesh_layers,
                     material_note,
                     source_details:"Downtown cPres_550_150_high.xsf block 15. Static geometry sample; original lighting and game collision data remain pending.".into(),
+                    source_environment:None,
+                    enter_source:false,
                 })
             })();
             let _ = sender.send(result);
@@ -188,7 +217,17 @@ impl Playground {
         });
     }
     fn reset(&mut self) {
-        self.skater = Skater::default();
+        self.skater = if self.source_skating {
+            let source = self
+                .sample
+                .as_ref()
+                .and_then(|sample| sample.source_environment.as_ref())
+                .expect("Source mode requires verified geometry");
+            Skater::at_spawn(source.spawn, source.spawn_yaw).expect("Verified source checkpoint")
+        } else {
+            Skater::default()
+        };
+        self.recoveries = 0;
         self.accumulator = 0.0;
         self.pending_ollie = false;
         self.pending_flip = false;
@@ -252,13 +291,19 @@ impl Playground {
                 Ok(result) => {
                     match result {
                         Ok(sample) => {
+                            let was_source = self.source_skating;
+                            let enter_source = sample.enter_source;
                             self.sample_message = Some(format!(
-                                "Imported {} meshes · {} riding surfaces · walls active · {}",
+                                "Imported {} meshes · {} preview riding surfaces · walls active · {}",
                                 sample.geometry.meshes.len(),
                                 sample.collision.rideable_count,
                                 sample.material_note
                             ));
                             self.sample = Some(sample);
+                            self.source_skating = enter_source;
+                            if was_source || enter_source {
+                                self.reset();
+                            }
                         }
                         Err(error) => {
                             self.sample_message = Some(format!("Mesh sample unavailable: {error}"))
@@ -286,9 +331,10 @@ impl Playground {
                     reset.surrender_focus();
                     self.reset();
                 }
-                let practice = ui.button("Rail practice").on_hover_text("Start moving toward the first rail. Hold G (pad LT) and tap Space (pad X) to hop onto it.");
+                let practice = ui.add_enabled(self.sample_job.is_none(),egui::Button::new("Rail practice")).on_hover_text("Start moving toward the first rail. Hold G (pad LT) and tap Space (pad X) to hop onto it.");
                 if practice.clicked() {
                     practice.surrender_focus();
+                    self.source_skating=false;
                     self.reset();
                     self.skater.position = v(7.0, 0.12, -4.5);
                     self.skater.speed = 6.0;
@@ -300,21 +346,33 @@ impl Playground {
                 );
                 if load.clicked() {
                     load.surrender_focus();
-                    self.load_sample(ctx, false);
+                    self.load_sample(ctx, SampleLoad::Mesh);
                 }
                 let neighborhood=ui.add_enabled(self.source.is_some() && self.sample_job.is_none(),egui::Button::new("Load neighborhood preview"));
                 if neighborhood.clicked() {
                     neighborhood.surrender_focus();
-                    self.load_sample(ctx,true);
+                    self.load_sample(ctx,SampleLoad::Neighborhood);
+                }
+                let ride=ui.add_enabled(self.source.is_some() && self.sample_job.is_none(),egui::Button::new("Skate neighborhood"))
+                    .on_hover_text("Original skating movement on selected game geometry at source spacing. Gaps return you to the verified start.");
+                if ride.clicked() {
+                    ride.surrender_focus();
+                    if self.sample.as_ref().is_some_and(|s|s.source_environment.is_some()) {
+                        self.source_skating=true;
+                        self.reset();
+                    } else { self.load_sample(ctx,SampleLoad::SourceSkating); }
+                }
+                let course=ui.add_visible(self.source_skating && self.sample_job.is_none(),egui::Button::new("Test course"));
+                if course.clicked() {
+                    course.surrender_focus();
+                    self.source_skating=false;
+                    self.reset();
                 }
                 if self.sample_job.is_some() {
                     ui.spinner();
                 }
-                let placement = self
-                    .sample
-                    .as_ref()
-                    .and_then(|sample| sample.collision.placement());
-                let place = ui.add_enabled(placement.is_some(), egui::Button::new("Place on mesh"));
+                let placement = self.sample.as_ref().and_then(|sample|if self.source_skating {sample.source_environment.as_ref().map(|s|s.spawn)}else{sample.collision.placement()});
+                let place = ui.add_enabled(placement.is_some() && self.sample_job.is_none(), egui::Button::new(if self.source_skating {"Source start"}else{"Place on mesh"}));
                 if place.clicked() {
                     place.surrender_focus();
                     self.reset();
@@ -350,14 +408,14 @@ impl Playground {
             if let Some(sample)=&self.sample {
                 ui.collapsing("Loaded source details",|ui| { ui.small(&sample.source_details); });
             }
-            ui.label("Original test course · keyboard + controller · early movement model");
+            ui.label(if self.source_skating {"SOURCE-SCALE NEIGHBORHOOD · original movement · selected game geometry"} else {"Original test course · keyboard + controller · early movement model"});
             ui.small(&self.controllers.status);
         });
         egui::TopBottomPanel::bottom("prototype_controls").show(ctx, |ui| {
-            ui.label("W/S Push/brake · A/D Steer/balance · Space Ollie/pop · F Flip · Q/E Spin · Hold G Grind · R Reset");
-            ui.small("Pad: stick Steer/balance · A Push · B Brake · X Ollie/pop · Y Flip · LB/RB Spin · Hold LT Grind · Start Reset · Back Launcher");
+            ui.label(if self.source_skating {"W/S Push/brake · A/D Steer · Space Ollie · F Flip · Q/E Spin · R Restart source route"}else{"W/S Push/brake · A/D Steer/balance · Space Ollie/pop · F Flip · Q/E Spin · Hold G Grind · R Reset"});
+            ui.small(if self.source_skating {"Pad: stick Steer · A Push · B Brake · X Ollie · Y Flip · LB/RB Spin · Start Restart · Back Launcher"}else{"Pad: stick Steer/balance · A Push · B Brake · X Ollie/pop · Y Flip · LB/RB Spin · Hold LT Grind · Start Reset · Back Launcher"});
             ui.horizontal(|ui| {
-                ui.strong(format!("{:.1} km/h", self.skater.speed * 3.6));
+                ui.strong(if self.source_skating {format!("{:.1} source units/s",self.skater.speed)}else{format!("{:.1} km/h", self.skater.speed * 3.6)});
                 ui.separator();
                 ui.label(if self.skater.bail_time>0.0 { "BAIL" } else if self.skater.grind.is_some() {
                     "GRINDING"
@@ -371,6 +429,7 @@ impl Playground {
                     self.skater.landings, self.skater.last_airtime
                 ));
             });
+            if self.source_skating { ui.small(format!("Recoveries: {} · missing geometry returns to the source start · original game physics remains pending",self.recoveries)); }
             ui.label(format!("Banked: {} · Last chain: {} · {} · {}",self.skater.score,self.skater.last_combo,self.skater.last_trick,if self.skater.switch_stance { "Switch" } else { "Regular" }));
             if let Some(grind) = &self.skater.grind {
                 ui.horizontal(|ui| {
@@ -431,6 +490,16 @@ impl Playground {
                 let world = World {
                     mesh: self.sample.as_ref().map(|s| &s.collision),
                 };
+                let source_world = self
+                    .sample
+                    .as_ref()
+                    .and_then(|s| s.source_environment.as_ref())
+                    .map(|s| s.terrain());
+                let terrain: &dyn Terrain = if self.source_skating {
+                    source_world.as_ref().expect("Verified source world")
+                } else {
+                    &world
+                };
                 self.skater.step_on(
                     Input {
                         ollie: self.pending_ollie,
@@ -438,8 +507,23 @@ impl Playground {
                         ..input
                     },
                     FIXED_DT,
-                    &world,
+                    terrain,
                 );
+                let recovery = self
+                    .sample
+                    .as_ref()
+                    .and_then(|s| s.source_environment.as_ref())
+                    .filter(|source| {
+                        self.source_skating && source.needs_recovery(self.skater.position)
+                    })
+                    .map(|source| (source.spawn, source.spawn_yaw));
+                if let Some((position, yaw)) = recovery {
+                    self.skater
+                        .recover_at(position, yaw)
+                        .expect("Verified source checkpoint");
+                    self.recoveries = self.recoveries.saturating_add(1);
+                    self.reset_camera();
+                }
                 self.pending_ollie = false;
                 self.pending_flip = false;
                 self.accumulator -= FIXED_DT;
@@ -463,119 +547,132 @@ impl Playground {
                 let painter = ui.painter_at(rect);
                 painter.rect_filled(rect, 0.0, Color32::from_rgb(126, 160, 177));
                 let mut scene = Scene::new(rect, self.camera, self.target);
-                for x in -10..10 {
-                    for z in -20..20 {
-                        let (x, z) = (x as f32 * 2.0, z as f32 * 2.0);
-                        let color = if ((x as i32 / 2) + (z as i32 / 2)) & 1 == 0 {
-                            [80, 99, 93]
-                        } else {
-                            [87, 106, 100]
-                        };
+                if !self.source_skating {
+                    for x in -10..10 {
+                        for z in -20..20 {
+                            let (x, z) = (x as f32 * 2.0, z as f32 * 2.0);
+                            let color = if ((x as i32 / 2) + (z as i32 / 2)) & 1 == 0 {
+                                [80, 99, 93]
+                            } else {
+                                [87, 106, 100]
+                            };
+                            scene.quad(
+                                [
+                                    v(x, 0.0, z),
+                                    v(x + 2.0, 0.0, z),
+                                    v(x + 2.0, 0.0, z + 2.0),
+                                    v(x, 0.0, z + 2.0),
+                                ],
+                                color,
+                            );
+                        }
+                    }
+                    for (start, end) in [(8.0, 14.0), (14.0, 18.0), (18.0, 24.0)] {
+                        let y0 = ground_height(0.0, start);
+                        let y1 = ground_height(0.0, end);
                         scene.quad(
                             [
-                                v(x, 0.0, z),
-                                v(x + 2.0, 0.0, z),
-                                v(x + 2.0, 0.0, z + 2.0),
-                                v(x, 0.0, z + 2.0),
+                                v(-3.0, y0, start),
+                                v(3.0, y0, start),
+                                v(3.0, y1, end),
+                                v(-3.0, y1, end),
                             ],
+                            [166, 184, 140],
+                        );
+                        for side in [-3.0, 3.0] {
+                            scene.quad(
+                                [
+                                    v(side, 0.0, start),
+                                    v(side, y0, start),
+                                    v(side, y1, end),
+                                    v(side, 0.0, end),
+                                ],
+                                [99, 113, 81],
+                            );
+                        }
+                    }
+                    for x in [-20.0, 20.0] {
+                        scene.cuboid(v(x, 0.3, 0.0), v(0.2, 0.6, 80.0), 0.0, [214, 126, 92]);
+                    }
+                    for z in [-40.0, 40.0] {
+                        scene.cuboid(v(0.0, 0.3, z), v(40.0, 0.6, 0.2), 0.0, [214, 126, 92]);
+                    }
+                    // Start and finish stripes help judge speed and direction.
+                    for z in [-8.0, 28.0] {
+                        scene.quad(
+                            [
+                                v(-10.0, 0.015, z),
+                                v(10.0, 0.015, z),
+                                v(10.0, 0.015, z + 0.25),
+                                v(-10.0, 0.015, z + 0.25),
+                            ],
+                            [218, 231, 185],
+                        );
+                    }
+                    for (index, rail) in COURSE_RAILS.iter().enumerate() {
+                        let (axis, length) = rail.axis().unwrap();
+                        let yaw = axis.x.atan2(axis.z);
+                        let active = self
+                            .skater
+                            .grind
+                            .as_ref()
+                            .is_some_and(|g| g.rail_index == index);
+                        let color = if active {
+                            [194, 239, 97]
+                        } else {
+                            [222, 192, 108]
+                        };
+                        scene.cuboid(
+                            (rail.start + rail.end) * 0.5 + v(0.0, -0.055, 0.0),
+                            v(0.12, 0.11, length),
+                            yaw,
+                            color,
+                        );
+                        for fraction in [0.15, 0.5, 0.85] {
+                            let point = rail.start + axis * (length * fraction);
+                            let height = rail.start.y - 0.11;
+                            scene.cuboid(
+                                v(point.x, height * 0.5, point.z),
+                                v(0.12, height, 0.12),
+                                yaw,
+                                [102, 115, 121],
+                            );
+                        }
+                        let approach = rail.start - axis * 3.0;
+                        scene.cuboid(
+                            v(approach.x, 0.02, approach.z),
+                            v(0.45, 0.02, 1.2),
+                            yaw,
                             color,
                         );
                     }
                 }
-                for (start, end) in [(8.0, 14.0), (14.0, 18.0), (18.0, 24.0)] {
-                    let y0 = ground_height(0.0, start);
-                    let y1 = ground_height(0.0, end);
-                    scene.quad(
-                        [
-                            v(-3.0, y0, start),
-                            v(3.0, y0, start),
-                            v(3.0, y1, end),
-                            v(-3.0, y1, end),
-                        ],
-                        [166, 184, 140],
-                    );
-                    for side in [-3.0, 3.0] {
-                        scene.quad(
-                            [
-                                v(side, 0.0, start),
-                                v(side, y0, start),
-                                v(side, y1, end),
-                                v(side, 0.0, end),
-                            ],
-                            [99, 113, 81],
-                        );
-                    }
-                }
-                for x in [-20.0, 20.0] {
-                    scene.cuboid(v(x, 0.3, 0.0), v(0.2, 0.6, 80.0), 0.0, [214, 126, 92]);
-                }
-                for z in [-40.0, 40.0] {
-                    scene.cuboid(v(0.0, 0.3, z), v(40.0, 0.6, 0.2), 0.0, [214, 126, 92]);
-                }
-                // Start and finish stripes help judge speed and direction.
-                for z in [-8.0, 28.0] {
-                    scene.quad(
-                        [
-                            v(-10.0, 0.015, z),
-                            v(10.0, 0.015, z),
-                            v(10.0, 0.015, z + 0.25),
-                            v(-10.0, 0.015, z + 0.25),
-                        ],
-                        [218, 231, 185],
-                    );
-                }
-                for (index, rail) in COURSE_RAILS.iter().enumerate() {
-                    let (axis, length) = rail.axis().unwrap();
-                    let yaw = axis.x.atan2(axis.z);
-                    let active = self
-                        .skater
-                        .grind
-                        .as_ref()
-                        .is_some_and(|g| g.rail_index == index);
-                    let color = if active {
-                        [194, 239, 97]
-                    } else {
-                        [222, 192, 108]
-                    };
-                    scene.cuboid(
-                        (rail.start + rail.end) * 0.5 + v(0.0, -0.055, 0.0),
-                        v(0.12, 0.11, length),
-                        yaw,
-                        color,
-                    );
-                    for fraction in [0.15, 0.5, 0.85] {
-                        let point = rail.start + axis * (length * fraction);
-                        let height = rail.start.y - 0.11;
-                        scene.cuboid(
-                            v(point.x, height * 0.5, point.z),
-                            v(0.12, height, 0.12),
-                            yaw,
-                            [102, 115, 121],
-                        );
-                    }
-                    let approach = rail.start - axis * 3.0;
-                    scene.cuboid(
-                        v(approach.x, 0.02, approach.z),
-                        v(0.45, 0.02, 1.2),
-                        yaw,
-                        color,
-                    );
-                }
                 let p = self.skater.position;
                 let yaw = self.skater.yaw;
-                let surface = World {
-                    mesh: self.sample.as_ref().map(|s| &s.collision),
+                let surface = if self.source_skating {
+                    self.sample
+                        .as_ref()
+                        .and_then(|s| s.source_environment.as_ref())
+                        .and_then(|s| s.terrain().support(p.x, p.z, p.y + 0.08))
+                } else {
+                    Some(
+                        World {
+                            mesh: self.sample.as_ref().map(|s| &s.collision),
+                        }
+                        .height(p.x, p.z, p.y + 0.08),
+                    )
+                };
+                if let Some(surface) = surface {
+                    scene.quad(
+                        [
+                            v(p.x - 0.35, surface + 0.02, p.z - 0.65),
+                            v(p.x + 0.35, surface + 0.02, p.z - 0.65),
+                            v(p.x + 0.35, surface + 0.02, p.z + 0.65),
+                            v(p.x - 0.35, surface + 0.02, p.z + 0.65),
+                        ],
+                        [51, 64, 62],
+                    );
                 }
-                .height(p.x, p.z, p.y + 0.08);
-                scene.quad(
-                    [
-                        v(p.x - 0.35, surface + 0.02, p.z - 0.65),
-                        v(p.x + 0.35, surface + 0.02, p.z - 0.65),
-                        v(p.x + 0.35, surface + 0.02, p.z + 0.65),
-                        v(p.x - 0.35, surface + 0.02, p.z + 0.65),
-                    ],
-                    [51, 64, 62],
-                );
                 let roll = self.skater.board_roll;
                 scene.cuboid_rolled(p, v(0.28, 0.09, 0.88), yaw, roll, [194, 239, 97]);
                 for dx in [-0.18, 0.18] {
@@ -625,7 +722,16 @@ impl Playground {
                 if let Some(sample) = &self.sample {
                     let imported = sample;
                     let sample = &imported.geometry;
-                    let transform = |p: Vec3| imported.placement.apply(p);
+                    let placement = if self.source_skating {
+                        imported
+                            .source_environment
+                            .as_ref()
+                            .expect("Verified source placement")
+                            .placement
+                    } else {
+                        imported.placement
+                    };
+                    let transform = |p: Vec3| placement.apply(p);
                     for (mesh_index, mesh) in sample.meshes.iter().enumerate() {
                         for indices in mesh.indices.chunks_exact(3) {
                             let points = [indices[0], indices[1], indices[2]]

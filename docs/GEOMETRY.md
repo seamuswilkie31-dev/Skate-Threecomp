@@ -20,7 +20,7 @@ Select the inspected ISO in the launcher, enter the skating prototype, then clic
 
 The inspector's `--mesh-sample` option invokes the same loader and emits counts and bounds as JSON, without exporting vertices.
 
-The separate [neighborhood preview](NEIGHBORHOOD.md) combines six selected batches using one placement, preserving their native border coordinates. It contains 64 meshes and 3,481 render triangles, with 32 meshes using ten local diffuse payloads. `--neighborhood-sample` reports its coverage and warnings. It does not imply complete scene assembly or support for all nearby batches.
+The separate [neighborhood preview](NEIGHBORHOOD.md) combines seven selected batches using one placement, preserving their native border coordinates. It contains 110 meshes and 11,602 render triangles, with 54 meshes using thirteen local diffuse payloads. A separate source-skating mode keeps scale 1.0 and shares translation-only placement between rendering and source-only collision. `--neighborhood-sample` reports its coverage and warnings. It does not imply complete scene assembly or support for all nearby batches.
 
 ## Native rendering path
 

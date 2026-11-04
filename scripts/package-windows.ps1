@@ -268,8 +268,10 @@ SKATE THREECOMP - PORTABLE WINDOWS PROTOTYPE
    Controller: A push, B brake, X ollie, Y flip, LB/RB spin, Start reset.
 
 Your own ISO is needed for Load game mesh sample, Load neighborhood preview,
-and Load texture sample. The neighborhood combines selected static batches;
-Place on mesh starts on an imported riding surface.
+Skate neighborhood, and Load texture sample. Skate neighborhood uses source
+spacing and a verified start; R restarts that route and Test course returns
+to the original course. Gaps recover automatically, keeping banked points.
+The miniature preview retains Place on mesh for inspection.
 Select it in the launcher before loading those samples. No game data is bundled.
 The original game's full Play action remains unavailable. This is a native Rust
 prototype and asset-research build, not a complete playable Skate 3 port.

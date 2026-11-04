@@ -444,23 +444,33 @@ mod tests {
     #[test]
     #[ignore = "Requires a native GPU and THREECOMP_TEST_ISO pointing to a local retail disc image"]
     fn retail_geometry_sample_draws_on_native_gpu() {
-        render_retail_geometry(false);
+        render_retail_geometry(false, false);
     }
     #[test]
     #[ignore = "Requires a native GPU and THREECOMP_TEST_ISO pointing to a local retail disc image"]
     fn retail_neighborhood_draws_on_native_gpu() {
-        render_retail_geometry(true);
+        render_retail_geometry(true, false);
     }
-    fn render_retail_geometry(neighborhood: bool) {
+    #[test]
+    #[ignore = "Requires a native GPU and THREECOMP_TEST_ISO pointing to a local retail disc image"]
+    fn source_scale_neighborhood_draws_from_skating_camera() {
+        render_retail_geometry(true, true);
+    }
+    fn render_retail_geometry(neighborhood: bool, source_scale: bool) {
         pollster::block_on(async {
             let path = std::env::var_os("THREECOMP_TEST_ISO")
                 .expect("Set THREECOMP_TEST_ISO to your local disc image");
+            let mut source_view = None;
             let (sample, assets, layers) = if neighborhood {
                 let patch = threecomp_engine_core::scene::load_retail_neighborhood(
                     std::path::Path::new(&path),
                 )
                 .unwrap();
-                assert_eq!(patch.geometry.meshes.len(), 64);
+                assert_eq!(patch.geometry.meshes.len(), 110);
+                if source_scale {
+                    let environment = patch.source_environment().unwrap();
+                    source_view = Some((environment.placement, environment.spawn));
+                }
                 (patch.geometry, patch.assets, patch.mesh_layers)
             } else {
                 let sample = threecomp_engine_core::geometry::load_retail_sample(
@@ -503,7 +513,10 @@ mod tests {
                     textured_meshes += 1;
                 }
                 for &index in &mesh.indices {
-                    let p = (mesh.positions[index as usize] - center) * scale;
+                    let p = source_view.map_or_else(
+                        || (mesh.positions[index as usize] - center) * scale,
+                        |(placement, _)| placement.apply(mesh.positions[index as usize]),
+                    );
                     vertices.push(Vertex {
                         position: [p.x, p.y, p.z],
                         color: [0.7, 0.8, 0.9],
@@ -523,14 +536,32 @@ mod tests {
                 .unwrap();
             device.push_error_scope(wgpu::ErrorFilter::Validation);
             let mut renderer = Renderer::new(&device, wgpu::TextureFormat::Rgba8Unorm);
-            assert_eq!(textured_meshes, if neighborhood { 32 } else { 6 });
+            assert_eq!(textured_meshes, if neighborhood { 54 } else { 6 });
             renderer.set_textures(&device, &queue, Some(&TextureSet::from_assets(&assets)));
-            let camera = Camera {
-                eye: [0., 0., -3., 0.],
-                right: [1., 0., 0., 0.],
-                up: [0., 1., 0., 0.],
-                forward: [0., 0., 1., 0.],
-                projection: [1.8, 1.8, 0.15, 100.],
+            let camera = if let Some((_, spawn)) = source_view {
+                let eye = spawn + threecomp_engine_core::skating::Vec3::new(0., 3.5, -7.);
+                let target = spawn + threecomp_engine_core::skating::Vec3::new(0., 0.8, 2.);
+                let forward = (target - eye).normalized();
+                let right = threecomp_engine_core::skating::Vec3::new(0., 1., 0.)
+                    .cross(forward)
+                    .normalized();
+                let up = forward.cross(right).normalized();
+                let vector = |v: threecomp_engine_core::skating::Vec3| [v.x, v.y, v.z, 0.];
+                Camera {
+                    eye: vector(eye),
+                    right: vector(right),
+                    up: vector(up),
+                    forward: vector(forward),
+                    projection: [1.8, 1.8, 0.15, 500.],
+                }
+            } else {
+                Camera {
+                    eye: [0., 0., -3., 0.],
+                    right: [1., 0., 0., 0.],
+                    up: [0., 1., 0., 0.],
+                    forward: [0., 0., 1., 0.],
+                    projection: [1.8, 1.8, 0.15, 100.],
+                }
             };
             let mut encoder = device.create_command_encoder(&Default::default());
             renderer.draw(&device, &queue, &mut encoder, [64, 64], &vertices, &camera);

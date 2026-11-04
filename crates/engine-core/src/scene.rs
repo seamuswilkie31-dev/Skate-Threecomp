@@ -2,6 +2,7 @@
 //! This is a bounded neighborhood preview, not a complete level/streaming system.
 use crate::{
     ArchiveIndex, StreamIndex,
+    collision::{SourceWorld, TriangleMesh},
     geometry::{self, Sample},
     inventory_disc, materials,
     rw4::Arena,
@@ -22,6 +23,7 @@ const TEXTURE_BUDGET: usize = 32 * 1024 * 1024;
 
 // Explicit observed batches; other batches in these cells may remain unsupported.
 const PATCH: &[(&str, &[usize])] = &[
+    ("cPres_450_50_high.xsf", &[43]),
     ("cPres_450_150_high.xsf", &[39]),
     ("cPres_550_150_high.xsf", &[15]),
     ("cPres_550_50_high.xsf", &[14]),
@@ -47,6 +49,13 @@ impl Placement {
             || sample.min.x > sample.max.x
             || sample.min.y > sample.max.y
             || sample.min.z > sample.max.z
+            || ![
+                sample.max.x - sample.min.x,
+                sample.max.y - sample.min.y,
+                sample.max.z - sample.min.z,
+            ]
+            .iter()
+            .all(|v| v.is_finite())
         {
             return Err("Invalid scene preview placement.".into());
         }
@@ -60,6 +69,32 @@ impl Placement {
     }
     pub fn sample(sample: &Sample) -> Result<Self, String> {
         Self::new(sample, 8.0, Vec3::new(-7.0, 0.02, -2.0))
+    }
+    /// Preserve source distances; recenter XZ and move the lowest source Y to
+    /// 0.02. This is a translation, independent of the miniature preview scale.
+    pub fn source_scale(sample: &Sample) -> Result<Self, String> {
+        if ![sample.min, sample.max]
+            .iter()
+            .all(|p| [p.x, p.y, p.z].iter().all(|v| v.is_finite()))
+            || sample.min.x > sample.max.x
+            || sample.min.y > sample.max.y
+            || sample.min.z > sample.max.z
+            || ![
+                sample.max.x - sample.min.x,
+                sample.max.y - sample.min.y,
+                sample.max.z - sample.min.z,
+            ]
+            .iter()
+            .all(|v| v.is_finite())
+        {
+            return Err("Invalid source scene bounds.".into());
+        }
+        Ok(Self {
+            center: sample.min * 0.5 + sample.max * 0.5,
+            floor: sample.min.y,
+            scale: 1.0,
+            destination: Vec3::new(0.0, 0.02, 0.0),
+        })
     }
     pub fn apply(self, p: Vec3) -> Vec3 {
         Vec3::new(
@@ -84,6 +119,70 @@ pub struct Neighborhood {
     pub assets: Vec<TextureAsset>,
     pub cells: Vec<CellSummary>,
     pub warnings: Vec<String>,
+}
+
+/// Translation-only collision and the explicit researched starting point.
+/// Missing triangles remain gaps; recovery is separate from terrain support.
+pub struct SourceEnvironment {
+    pub placement: Placement,
+    pub collision: TriangleMesh,
+    pub min: Vec3,
+    pub max: Vec3,
+    pub spawn: Vec3,
+    pub spawn_yaw: f32,
+}
+impl Neighborhood {
+    pub fn source_environment(&self) -> Result<SourceEnvironment, String> {
+        let placement = Placement::source_scale(&self.geometry)?;
+        let min = placement.apply(self.geometry.min);
+        let max = placement.apply(self.geometry.max);
+        let collision = TriangleMesh::from_sample_at(&self.geometry, |p| placement.apply(p))?;
+        let spawn = placement.apply(Vec3::new(512.82666, 84.623, 88.72301));
+        if spawn.x < min.x || spawn.x > max.x || spawn.z < min.z || spawn.z > max.z {
+            return Err("Researched source spawn lies outside the selected scene.".into());
+        }
+        let floor = collision
+            .height(spawn.x, spawn.z, spawn.y + 0.08)
+            .ok_or("Researched source spawn has no source-triangle support.")?;
+        if (spawn.y - floor - crate::rails::BOARD_HEIGHT).abs() > 0.05 {
+            return Err("Researched source spawn differs from its verified surface height.".into());
+        }
+        let overhead_support = collision
+            .height(spawn.x, spawn.z, spawn.y + 1.8)
+            .ok_or("Researched source spawn headroom query failed.")?;
+        if (overhead_support - floor).abs() > 0.05 {
+            return Err(
+                "Researched source spawn has an overlapping shallow surface overhead.".into(),
+            );
+        }
+        Ok(SourceEnvironment {
+            placement,
+            collision,
+            min,
+            max,
+            spawn,
+            spawn_yaw: 0.0,
+        })
+    }
+}
+impl SourceEnvironment {
+    pub fn terrain(&self) -> SourceWorld<'_> {
+        SourceWorld {
+            mesh: &self.collision,
+            min: self.min,
+            max: self.max,
+        }
+    }
+    pub fn needs_recovery(&self, position: Vec3) -> bool {
+        ![position.x, position.y, position.z]
+            .iter()
+            .all(|v| v.is_finite())
+            || position.x < self.min.x
+            || position.x > self.max.x
+            || position.z < self.min.z
+            || position.z > self.max.z
+            || position.y < self.min.y - 20.0
+    }
 }
 
 /// Required geometry errors abort the load. Optional texture/material failures
@@ -382,6 +481,7 @@ fn insert_asset(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::collision::Terrain;
     fn sample(min: Vec3, max: Vec3) -> Sample {
         Sample {
             meshes: Vec::new(),
@@ -447,6 +547,117 @@ mod tests {
         let center = placement.apply(Vec3::new(2. / 3., 2., 1. / 3.));
         assert!((collision.height(center.x, center.z, 1.).unwrap() - center.y).abs() < 0.00001);
     }
+    fn source_fixture(gap: bool, overhead: bool) -> Neighborhood {
+        let mut geometry = sample(
+            Vec3::new(500., 84.503, 80.),
+            Vec3::new(530., if overhead { 85.503 } else { 84.503 }, 120.),
+        );
+        let mut rectangle = |left, right, y| {
+            geometry.meshes.push(geometry::Mesh {
+                draw_index: geometry.meshes.len(),
+                positions: vec![
+                    Vec3::new(left, y, 80.),
+                    Vec3::new(right, y, 80.),
+                    Vec3::new(left, y, 120.),
+                    Vec3::new(right, y, 120.),
+                ],
+                indices: vec![0, 1, 2, 1, 3, 2],
+                uv: vec![[0.; 2]; 4],
+            });
+        };
+        if gap {
+            rectangle(500., 515., 84.503);
+            rectangle(520., 530., 84.503);
+        } else {
+            rectangle(500., 530., 84.503);
+        }
+        if overhead {
+            rectangle(500., 530., 85.503);
+        }
+        Neighborhood {
+            placement: Placement::sample(&geometry).unwrap(),
+            mesh_layers: vec![0; geometry.meshes.len()],
+            geometry,
+            assets: Vec::new(),
+            cells: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+    #[test]
+    fn source_placement_preserves_distances_and_seams() {
+        let joined = sample(Vec3::new(400., 28., -4.), Vec3::new(654., 166., 300.));
+        let placement = Placement::source_scale(&joined).unwrap();
+        assert_eq!(placement.apply(joined.min), Vec3::new(-127., 0.02, -152.));
+        let seam = Vec3::new(500., 84.503, 100.);
+        let adjacent_seam = Vec3::new(500., 84.503, 100.);
+        assert_eq!(placement.apply(seam), placement.apply(adjacent_seam));
+        let offset = Vec3::new(20., 3., 10.);
+        let delta = placement.apply(seam + offset) - placement.apply(seam);
+        assert!((delta.x - offset.x).abs() < 0.00001);
+        assert!((delta.y - offset.y).abs() < 0.00001);
+        assert!((delta.z - offset.z).abs() < 0.00001);
+        let invalid = sample(Vec3::new(f32::NAN, 0., 0.), Vec3::new(1., 1., 1.));
+        assert!(Placement::source_scale(&invalid).is_err());
+        let reversed = sample(Vec3::new(2., 0., 0.), Vec3::new(1., 1., 1.));
+        assert!(Placement::source_scale(&reversed).is_err());
+    }
+    #[test]
+    fn source_spawn_requires_expected_surface_and_clear_shallow_headroom() {
+        let patch = source_fixture(false, false);
+        let source = patch.source_environment().unwrap();
+        let terrain = source.terrain();
+        let support = terrain
+            .support(source.spawn.x, source.spawn.z, source.spawn.y + 0.08)
+            .unwrap();
+        assert!((source.spawn.y - support - crate::rails::BOARD_HEIGHT).abs() < 0.00001);
+        assert_eq!(source.spawn_yaw, 0.);
+        assert!(!source.needs_recovery(source.spawn));
+        assert!(source_fixture(false, true).source_environment().is_err());
+        let mut missing = source_fixture(false, false);
+        missing.geometry.meshes[0].indices.clear();
+        assert!(missing.source_environment().is_err());
+        let mut wrong_height = source_fixture(false, false);
+        for p in &mut wrong_height.geometry.meshes[0].positions {
+            p.y -= 1.;
+        }
+        wrong_height.geometry.min.y -= 1.;
+        wrong_height.geometry.max.y -= 1.;
+        assert!(wrong_height.source_environment().is_err());
+    }
+    #[test]
+    fn source_gap_stays_unsupported_until_fall_recovery_threshold() {
+        let patch = source_fixture(true, false);
+        let source = patch.source_environment().unwrap();
+        let gap = source.placement.apply(Vec3::new(517.5, 84.623, 100.));
+        assert!(source.terrain().support(gap.x, gap.z, gap.y + 1.).is_none());
+        assert!(!source.needs_recovery(gap));
+        assert!(!source.needs_recovery(Vec3::new(gap.x, source.min.y - 20., gap.z)));
+        assert!(source.needs_recovery(Vec3::new(gap.x, source.min.y - 20.01, gap.z)));
+        for invalid in [
+            Vec3::new(f32::NAN, gap.y, gap.z),
+            Vec3::new(gap.x, f32::INFINITY, gap.z),
+            Vec3::new(source.min.x - 0.01, gap.y, gap.z),
+            Vec3::new(gap.x, gap.y, source.max.z + 0.01),
+        ] {
+            assert!(source.needs_recovery(invalid));
+        }
+        let mut skater = crate::skating::Skater::default();
+        skater.position = gap;
+        skater.grounded = false;
+        for _ in 0..360 {
+            skater.step_on(
+                Default::default(),
+                crate::skating::FIXED_DT,
+                &source.terrain(),
+            );
+            assert!(!skater.grounded);
+            if source.needs_recovery(skater.position) {
+                break;
+            }
+        }
+        assert!(source.needs_recovery(skater.position));
+        assert!(skater.position.y.is_finite());
+    }
     #[test]
     fn optional_codec_failure_keeps_fallback_but_cannot_bypass_work_budget() {
         let empty = crate::StreamSegment {
@@ -510,8 +721,17 @@ mod tests {
     fn retail_neighborhood_preserves_all_selected_batches_and_collision() {
         let path = std::env::var_os("THREECOMP_TEST_ISO").expect("Set THREECOMP_TEST_ISO");
         let patch = load_retail_neighborhood(Path::new(&path)).unwrap();
-        assert_eq!(patch.cells.len(), 6);
-        assert_eq!(patch.geometry.meshes.len(), 64);
+        assert_eq!(patch.cells.len(), 7);
+        assert_eq!(patch.geometry.meshes.len(), 110);
+        assert_eq!(
+            patch
+                .geometry
+                .meshes
+                .iter()
+                .map(|m| m.positions.len())
+                .sum::<usize>(),
+            15703
+        );
         assert_eq!(
             patch
                 .geometry
@@ -519,14 +739,15 @@ mod tests {
                 .iter()
                 .map(|m| m.indices.len() / 3)
                 .sum::<usize>(),
-            3481
+            11602
         );
         let collision = crate::collision::TriangleMesh::from_sample_at(&patch.geometry, |p| {
             patch.placement.apply(p)
         })
         .unwrap();
-        // Four zero-area render faces are discarded by collision construction.
-        assert_eq!(collision.triangle_count(), 3477);
+        // Eleven faces fall below the miniature preview's collision area
+        // threshold. Source-scale collision below retains 11,593 faces.
+        assert_eq!(collision.triangle_count(), 11591);
         let placement = collision.placement().unwrap();
         let world = crate::collision::World {
             mesh: Some(&collision),
@@ -546,7 +767,8 @@ mod tests {
         }
         assert!(skater.grounded && (skater.position.y - placement.y).abs() < 0.001);
         let textured = patch.mesh_layers.iter().filter(|&&layer| layer > 0).count();
-        assert!(textured >= 6 && patch.assets.len() >= 4);
+        assert_eq!(textured, 54);
+        assert_eq!(patch.assets.len(), 13);
         assert!(
             patch
                 .mesh_layers
@@ -554,11 +776,73 @@ mod tests {
                 .all(|&l| l as usize <= patch.assets.len())
         );
         eprintln!(
-            "Neighborhood: {} cells / {} meshes /3481 triangles /{textured} textured /{} textures /{} warnings",
+            "Neighborhood: {} cells / {} meshes /11602 triangles /{textured} textured /{} textures /{} warnings",
             patch.cells.len(),
             patch.geometry.meshes.len(),
             patch.assets.len(),
             patch.warnings.len()
+        );
+    }
+    #[test]
+    #[ignore = "Requires THREECOMP_TEST_ISO pointing to the local retail disc image"]
+    fn retail_source_scale_ride_crosses_cell_seam_and_ollie_lands() {
+        let path = std::env::var_os("THREECOMP_TEST_ISO").expect("Set THREECOMP_TEST_ISO");
+        let patch = load_retail_neighborhood(Path::new(&path)).unwrap();
+        let source = patch.source_environment().unwrap();
+        assert_eq!(source.collision.triangle_count(), 11593);
+        let mut skater = crate::skating::Skater::default();
+        skater.position = source.spawn;
+        skater.yaw = source.spawn_yaw;
+        for _ in 0..397 {
+            skater.step_on(
+                crate::skating::Input {
+                    push: true,
+                    ..Default::default()
+                },
+                crate::skating::FIXED_DT,
+                &source.terrain(),
+            );
+            assert!(skater.grounded && !source.needs_recovery(skater.position));
+            let floor = source
+                .terrain()
+                .support(
+                    skater.position.x,
+                    skater.position.z,
+                    skater.position.y + 0.08,
+                )
+                .expect("Source-only support throughout ride");
+            assert!((skater.position.y - floor - crate::rails::BOARD_HEIGHT).abs() < 0.001);
+        }
+        assert!(skater.position.z - source.spawn.z > 20.);
+        let native_seam = source.placement.apply(Vec3::new(512.82666, 84.503, 100.));
+        assert!(source.spawn.z < native_seam.z && skater.position.z > native_seam.z);
+        skater.speed = 0.;
+        let launch = skater.position;
+        skater.step_on(
+            crate::skating::Input {
+                ollie: true,
+                ..Default::default()
+            },
+            crate::skating::FIXED_DT,
+            &source.terrain(),
+        );
+        assert!(!skater.grounded);
+        for _ in 0..120 {
+            skater.step_on(
+                Default::default(),
+                crate::skating::FIXED_DT,
+                &source.terrain(),
+            );
+            assert!(!source.needs_recovery(skater.position));
+        }
+        assert!(skater.grounded && (skater.position.y - launch.y).abs() < 0.001);
+        assert_eq!(skater.landings, 1);
+        eprintln!(
+            "Source environment: spawn {:?}, bounds {:?}..{:?}, ridden {:.4} source units, ollie landed",
+            source.spawn,
+            source.min,
+            source.max,
+            skater.position.z - source.spawn.z
         );
     }
 }

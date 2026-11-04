@@ -24,3 +24,7 @@ Synthetic tests cover slopes, both windings, support ceilings, falling onto a ro
 $env:THREECOMP_TEST_ISO = "D:\Games\Skate 3.iso"
 cargo test -p threecomp-engine-core retail_sample_placement -- --ignored --nocapture
 ```
+
+## Source-only mode
+
+The [source skating mode](SOURCE_SKATING.md) uses `SourceWorld`: support is optional and comes only from imported triangles. It has independent finite XZ movement bounds and an empty rail list. The original `World` keeps the test-course baseline and practice rails. Skating clears stale grounded state before banking or bail recovery when support disappears; missing support never becomes a numeric floor. The pre-step support ceiling still prevents snapping up through a roof. Recovery returns to a separately verified checkpoint and clears only pending/transient state, preserving banked points. Tests cover holes, bounds beyond the original course, source-only falls, stale grounding, rail exclusion, safe lower-surface candidates, and invalid checkpoint rejection.

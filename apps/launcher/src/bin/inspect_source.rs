@@ -64,6 +64,16 @@ fn run() -> Result<(), String> {
                 patch.placement.apply(p)
             })?;
         let textured = patch.mesh_layers.iter().filter(|&&layer| layer > 0).count();
+        let source_skating = match patch.source_environment() {
+            Ok(source) => {
+                serde_json::json!({"available":true,"uniform_scale":1.0,"translation_only":true,
+                "bounds_min":[source.min.x,source.min.y,source.min.z],"bounds_max":[source.max.x,source.max.y,source.max.z],
+                "spawn":[source.spawn.x,source.spawn.y,source.spawn.z],"spawn_yaw":source.spawn_yaw,
+                "collision_triangle_count":source.collision.triangle_count(),"rideable_triangle_count":source.collision.rideable_count,
+                "synthetic_floor":false,"practice_rails":false})
+            }
+            Err(error) => serde_json::json!({"available":false,"error":error}),
+        };
         let cells:Vec<_>=patch.cells.iter().map(|c|serde_json::json!({"member":c.member,"blocks":c.blocks,"mesh_count":c.mesh_count,"triangle_count":c.triangle_count})).collect();
         let report = serde_json::json!({"schema_version":1,"partial_neighborhood":true,"cell_count":patch.cells.len(),"cells":cells,
             "mesh_count":patch.geometry.meshes.len(),"vertex_count":patch.geometry.meshes.iter().map(|m|m.positions.len()).sum::<usize>(),
@@ -71,7 +81,7 @@ fn run() -> Result<(), String> {
             "bounds_min":[patch.geometry.min.x,patch.geometry.min.y,patch.geometry.min.z],"bounds_max":[patch.geometry.max.x,patch.geometry.max.y,patch.geometry.max.z],
             "textured_meshes":textured,"plain_meshes":patch.geometry.meshes.len()-textured,"diffuse_textures_loaded":patch.assets.len(),
             "collision_triangle_count":collision.triangle_count(),"rideable_triangle_count":collision.rideable_count,
-            "placement":collision.placement().map(|p|[p.x,p.y,p.z]),"warnings":patch.warnings,"asset_export":false});
+            "placement":collision.placement().map(|p|[p.x,p.y,p.z]),"warnings":patch.warnings,"source_skating":source_skating,"asset_export":false});
         serde_json::to_writer_pretty(&mut output, &report).map_err(|e| e.to_string())?;
         return writeln!(output)
             .and_then(|_| output.flush())

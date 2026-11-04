@@ -55,7 +55,8 @@
 - [ ] Improve full-body collision, ceiling contact, sliding, and original game collision-format support.
 - [x] Inspect observed 2D texture descriptors and Xenos fetch metadata.
 - [x] Bind four local diffuse textures to six sample meshes and preview a decoded lightmap.
-- [x] Assemble six selected neighboring static batches with one shared render/collision placement (64 meshes, 3,481 render triangles, 32 textured meshes).
+- [x] Assemble seven selected neighboring static batches with shared placement (110 meshes, 11,602 render triangles, 54 textured meshes).
+- [x] Add source-scale skating with translation-only geometry, source-only support/bounds, verified route start, and gap recovery that preserves banked points.
 - [ ] Resolve the remaining material keys, packed base tails, other formats, and mip levels.
 - [ ] Verify lightmap coordinates, original lighting, scene transforms, and complete scene assembly.
 

@@ -1,7 +1,7 @@
 //! Original skating movement for a synthetic course, independent of game assets.
 
 use crate::{
-    rails::{self, COURSE_RAILS, Grind, Rail},
+    rails::{self, Grind, Rail},
     tricks::{BANK_DELAY, Combo},
 };
 use std::ops::{Add, Mul, Sub};
@@ -122,6 +122,35 @@ impl Default for Skater {
     }
 }
 impl Skater {
+    pub fn at_spawn(position: Vec3, yaw: f32) -> Result<Self, String> {
+        let mut skater = Self::default();
+        skater.recover_at(position, yaw)?;
+        skater.last_trick = "Ready";
+        Ok(skater)
+    }
+    /// Clear transient movement/trick state after leaving loaded geometry while
+    /// preserving already banked points and completed-contact statistics.
+    pub fn recover_at(&mut self, position: Vec3, yaw: f32) -> Result<(), String> {
+        if ![position.x, position.y, position.z, yaw]
+            .iter()
+            .all(|v| v.is_finite() && v.abs() < 1_000_000.0)
+        {
+            return Err("Invalid skating checkpoint.".into());
+        }
+        let fresh = Self {
+            position,
+            yaw,
+            travel_yaw: yaw,
+            score: self.score,
+            last_combo: self.last_combo,
+            landings: self.landings,
+            last_airtime: self.last_airtime,
+            last_trick: "Recovered to source start",
+            ..Self::default()
+        };
+        *self = fresh;
+        Ok(())
+    }
     pub fn travel_direction(&self) -> Vec3 {
         let heading = if self.grounded {
             self.yaw
@@ -143,32 +172,48 @@ impl Skater {
     pub fn step(&mut self, input: Input, dt: f32) {
         self.step_on(input, dt, &crate::collision::World { mesh: None });
     }
-    pub fn step_on(&mut self, input: Input, dt: f32, terrain: &impl crate::collision::Terrain) {
-        self.step_with_rails(input, dt, terrain, &COURSE_RAILS);
+    pub fn step_on(
+        &mut self,
+        input: Input,
+        dt: f32,
+        terrain: &(impl crate::collision::Terrain + ?Sized),
+    ) {
+        self.step_with_rails(input, dt, terrain, terrain.rails());
     }
     pub fn step_with_rails(
         &mut self,
         input: Input,
         dt: f32,
-        terrain: &impl crate::collision::Terrain,
+        terrain: &(impl crate::collision::Terrain + ?Sized),
         rails: &[Rail],
     ) {
         if !dt.is_finite() || dt <= 0.0 || dt > 1.0 / 30.0 {
             return;
         }
         self.grind_cooldown = (self.grind_cooldown - dt).max(0.0);
+        let support_ceiling = self.position.y + 0.08;
+        let previous_surface = terrain.support(self.position.x, self.position.z, support_ceiling);
+        if self.grounded
+            && previous_surface
+                .is_none_or(|height| (self.position.y - height - rails::BOARD_HEIGHT).abs() > 0.2)
+        {
+            self.grounded = false;
+            self.vertical_speed = 0.0;
+            self.start_air(false);
+        }
         if self.bail_time > 0.0 {
             self.bail_time = (self.bail_time - dt).max(0.0);
             self.speed = 0.0;
             // A rail bail falls to the floor during recovery instead of hanging
             // motionless at rail height. Grounded bails remain on their surface.
-            let floor = terrain.height(self.position.x, self.position.z, self.position.y + 0.08)
-                + rails::BOARD_HEIGHT;
+            let floor = previous_surface.map(|height| height + rails::BOARD_HEIGHT);
             if !self.grounded {
                 self.vertical_speed -= 16.0 * dt;
                 self.position.y += self.vertical_speed * dt;
             }
-            if self.position.y <= floor || self.grounded {
+            if let Some(floor) = floor
+                && (self.position.y <= floor || self.grounded)
+            {
                 self.position.y = floor;
                 self.vertical_speed = 0.0;
                 self.grounded = true;
@@ -197,8 +242,7 @@ impl Skater {
                 let previous = grind.along;
                 grind.along = (grind.along + grind.direction * self.speed * dt).clamp(0.0, length);
                 let next = grind.rail.board_position(grind.along).unwrap();
-                if next.x.abs() > COURSE_X - 0.5
-                    || next.z.abs() > COURSE_Z - 0.5
+                if !terrain.contains_motion(self.position, next)
                     || terrain.blocks_motion(self.position, next)
                 {
                     self.bail("Bail · rail path blocked");
@@ -249,8 +293,6 @@ impl Skater {
                 self.start_air(true);
             }
         }
-        let support_ceiling = self.position.y + 0.08;
-        let previous_surface = terrain.height(self.position.x, self.position.z, support_ceiling);
         let heading = if self.grounded {
             self.yaw
                 + if self.switch_stance {
@@ -263,8 +305,7 @@ impl Skater {
         };
         let movement = Vec3::new(heading.sin(), 0.0, heading.cos()) * (self.speed * dt);
         let next = self.position + movement;
-        if next.x.abs() > COURSE_X - 0.5
-            || next.z.abs() > COURSE_Z - 0.5
+        if !terrain.contains_motion(self.position, next)
             || terrain.blocks_motion(self.position, next)
         {
             self.speed = 0.0;
@@ -272,16 +313,21 @@ impl Skater {
             self.position.x = next.x;
             self.position.z = next.z;
         }
-        let floor = terrain.height(self.position.x, self.position.z, support_ceiling) + 0.12;
+        let next_surface = terrain.support(self.position.x, self.position.z, support_ceiling);
+        let floor = next_surface.map(|height| height + rails::BOARD_HEIGHT);
         if self.grounded {
-            let change = floor - 0.12 - previous_surface;
-            if change.abs() <= 0.2 {
-                self.position.y = floor;
+            let change = previous_surface
+                .zip(next_surface)
+                .map(|(previous, next)| next - previous);
+            if let Some(change) = change
+                && change.abs() <= 0.2
+            {
+                self.position.y = floor.unwrap();
                 // Grade changes affect speed while riding the ramp.
                 if movement.dot(movement) > 0.000001 {
                     self.speed = (self.speed - change * 4.0).clamp(0.0, 12.0);
                 }
-            } else if change > 0.0 {
+            } else if change.is_some_and(|change| change > 0.0) {
                 self.position.x -= movement.x;
                 self.position.z -= movement.z;
                 self.speed = 0.0;
@@ -351,7 +397,10 @@ impl Skater {
                 });
                 return;
             }
-            if self.position.y <= floor && self.vertical_speed <= 0.0 {
+            if let Some(floor) = floor
+                && self.position.y <= floor
+                && self.vertical_speed <= 0.0
+            {
                 self.position.y = floor;
                 self.vertical_speed = 0.0;
                 self.grounded = true;
@@ -459,6 +508,134 @@ pub fn ground_height(x: f32, z: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn source_floor(x0: f32, x1: f32, z0: f32, z1: f32, y: f32) -> crate::collision::TriangleMesh {
+        crate::collision::TriangleMesh::from_triangles(&[
+            [
+                Vec3::new(x0, y, z0),
+                Vec3::new(x1, y, z0),
+                Vec3::new(x0, y, z1),
+            ],
+            [
+                Vec3::new(x1, y, z0),
+                Vec3::new(x1, y, z1),
+                Vec3::new(x0, y, z1),
+            ],
+        ])
+        .unwrap()
+    }
+    #[test]
+    fn source_gap_causes_fall_without_floor_or_chain_banking() {
+        let mesh = source_floor(-1., 1., 0., 1., 2.);
+        let world = crate::collision::SourceWorld {
+            mesh: &mesh,
+            min: Vec3::new(-10., -10., -10.),
+            max: Vec3::new(10., 10., 10.),
+        };
+        let mut skater = Skater::at_spawn(Vec3::new(0., 2.12, 0.9), 0.).unwrap();
+        skater.speed = 4.;
+        skater.combo.add(400);
+        for _ in 0..120 {
+            skater.step_on(Input::default(), FIXED_DT, &world);
+        }
+        assert!(!skater.grounded && skater.position.y < 0.0 && skater.vertical_speed < 0.0);
+        assert_eq!(skater.score, 0);
+        assert_eq!(skater.combo.value(), 400);
+    }
+    #[test]
+    fn missing_support_clears_stale_grounding_before_banking_or_bail_recovery() {
+        let mesh = source_floor(-1., 1., 0., 1., 0.);
+        let world = crate::collision::SourceWorld {
+            mesh: &mesh,
+            min: Vec3::new(-10., -10., -10.),
+            max: Vec3::new(10., 10., 10.),
+        };
+        for bailing in [false, true] {
+            let mut skater = Skater::at_spawn(Vec3::new(4., 3., 4.), 0.).unwrap();
+            skater.combo.add(400);
+            skater.combo.remaining = FIXED_DT * 0.5;
+            if bailing {
+                skater.bail_time = 0.5;
+            }
+            skater.step_on(Input::default(), FIXED_DT, &world);
+            assert!(!skater.grounded && skater.position.y < 3.0);
+            assert_eq!(skater.score, 0);
+        }
+    }
+    #[test]
+    fn source_bounds_allow_riding_beyond_the_original_course_limits() {
+        let mesh = source_floor(-2., 2., 50., 100., 0.);
+        let world = crate::collision::SourceWorld {
+            mesh: &mesh,
+            min: Vec3::new(-2., 0., 50.),
+            max: Vec3::new(2., 1., 100.),
+        };
+        let mut skater = Skater::at_spawn(Vec3::new(0., 0.12, 60.), 0.).unwrap();
+        skater.speed = 8.;
+        for _ in 0..120 {
+            skater.step_on(Input::default(), FIXED_DT, &world);
+        }
+        assert!(skater.grounded && skater.position.z > 67.0 && skater.speed > 7.0);
+    }
+    #[test]
+    fn source_world_has_no_invisible_practice_rails() {
+        let mesh = source_floor(6., 8., -8., 10., 0.);
+        let world = crate::collision::SourceWorld {
+            mesh: &mesh,
+            min: Vec3::new(6., 0., -8.),
+            max: Vec3::new(8., 2., 10.),
+        };
+        let mut skater = Skater::at_spawn(Vec3::new(7., 0.12, -4.5), 0.).unwrap();
+        skater.speed = 6.;
+        skater.step_on(
+            Input {
+                ollie: true,
+                grind: true,
+                ..Input::default()
+            },
+            FIXED_DT,
+            &world,
+        );
+        for _ in 0..120 {
+            skater.step_on(
+                Input {
+                    grind: true,
+                    ..Input::default()
+                },
+                FIXED_DT,
+                &world,
+            );
+            assert!(skater.grind.is_none());
+        }
+        assert!(skater.grounded);
+    }
+    #[test]
+    fn recovery_clears_transient_states_preserves_banked_points_and_rejects_bad_checkpoint() {
+        let mut skater = catch_practice_rail(true);
+        skater.score = 1234;
+        skater.last_combo = 400;
+        skater.landings = 5;
+        let previous = skater.position;
+        assert!(skater.recover_at(Vec3::new(f32::NAN, 0., 0.), 0.).is_err());
+        assert_eq!(skater.position, previous);
+        assert!(skater.grind.is_some());
+        let spawn = Vec3::new(50., 10.12, 60.);
+        skater
+            .recover_at(spawn, std::f32::consts::FRAC_PI_2)
+            .unwrap();
+        assert_eq!(skater.position, spawn);
+        assert_eq!(
+            (skater.score, skater.last_combo, skater.landings),
+            (1234, 400, 5)
+        );
+        assert!(skater.grounded && skater.grind.is_none() && skater.combo.value() == 0);
+        assert!(
+            skater.speed == 0.
+                && skater.vertical_speed == 0.
+                && skater.board_roll == 0.
+                && skater.bail_time == 0.
+        );
+        assert!(skater.travel_direction().x > 0.99);
+    }
     #[test]
     fn riding_off_a_ledge_does_not_award_an_ollie() {
         let mut skater = Skater {

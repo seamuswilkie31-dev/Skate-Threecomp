@@ -1,32 +1,35 @@
-# Selected Downtown neighborhood preview
+# Selected Downtown neighborhood
 
-Select the inspected ISO, enter the prototype, and click **Load neighborhood preview**. The worker loads six explicit static batches from `data/content/worldDIST_DownTown.big`. **Place on mesh** uses an upper riding surface in the assembled preview. **Load game mesh sample** returns to the earlier single-batch sample. Loading errors retain the previously loaded preview and leave the original course usable.
+Select the inspected ISO and open the prototype. **Load neighborhood preview** creates the miniature beside the original course; **Place on mesh** uses an upper riding surface. **Skate neighborhood** loads the same selected geometry at its source spacing and starts on a verified route. **Test course** returns to the original course. See [source-scale skating controls](SOURCE_SKATING.md).
 
-| Member under `data/content/world/stream/DIST_DownTown/` | Block (zero-based) | Meshes | Vertices | Render triangles |
+All seven static batches come from `data/content/worldDIST_DownTown.big`, under `data/content/world/stream/DIST_DownTown/`:
+
+| Member | Block (zero-based) | Meshes | Vertices | Render triangles |
 |---|---:|---:|---:|---:|
+| `cPres_450_50_high.xsf` | 43 | 46 | 10,612 | 8,121 |
 | `cPres_450_150_high.xsf` | 39 | 31 | 1,673 | 1,079 |
 | `cPres_550_150_high.xsf` | 15 | 9 | 647 | 413 |
 | `cPres_550_50_high.xsf` | 14 | 16 | 1,249 | 888 |
 | `cPres_550_250_high.xsf` | 1 | 1 | 33 | 33 |
 | `cPres_650_150_high.xsf` | 1 | 1 | 5 | 3 |
 | `cPres_650_50_high.xsf` | 7 | 6 | 1,484 | 1,065 |
-| **Total** | | **64** | **5,091** | **3,481** |
+| **Total** | | **110** | **15,703** | **11,602** |
 
-These are selected batches, not every object in those cells or a complete Downtown map. Additional batches, dynamic objects, instance transforms, original collision, animation, lighting, and streaming remain pending. Geometry remains in its native coordinate system while merging. Border vertices match exactly between several neighboring batches: the center shares 43 unique XYZ positions with the western batch and 45 with the southern batch; the southern batch shares 26 with the southeast batch.
+These are selected batches, not every object in those cells or a complete Downtown map. Additional batches, dynamic objects, instance transforms, original collision, animation, lighting, and streaming remain pending. Geometry stays in native coordinates while merging. Several neighboring batches share bit-identical XYZ border vertices. The additional western/southern batch shares 151 positions with `450_150` and 59 with `550_50`. A bounded two-unit grid below native height 100 in its 100 × 100 footprint found support at 2,495 of 2,500 points after adding that batch, compared with two points beforehand. This measures sampled geometry coverage, not full gameplay accessibility.
 
-One uniform placement fits the combined bounds into a 16-unit preview centered beside the original course. Individual cells are never normalized separately. Rendering and collision call the same placement. Four zero-area render faces are discarded by collision construction, leaving 3,477 collision triangles. This is still a scaled development preview; distances and movement are not a reconstruction of the original game's world scale or physics.
+The miniature uses one uniform placement fitting the combined bounds into 16 units beside the original course. Source-scale skating applies translation only: scale is exactly 1.0, XZ is recentered, and the lowest Y moves to 0.02. Rendering and collision use the same active placement. Source collision retains 11,593 nondegenerate faces; the miniature retains 11,591 because two additional tiny faces fall below the collision-area threshold after downscaling. Source units have not been calibrated against real-world metres or original-game physics.
 
 ## Materials and loading limits
 
-The current inspected image supplies ten supported diffuse payloads for 32 of the 64 meshes. The other 32 remain plain because their local texture is absent or uses an unsupported profile. Two optional decoder warnings are exposed in **Loaded source details**, along with the selected member/block list. Lightmap pixels remain available through the separate texture preview; shader interpretation of the packed lightmap-related vertex attributes is unverified, so lighting is not applied.
+Thirteen supported diffuse payloads cover 54 of the 110 meshes. The other 56 remain plain because their local texture is absent or unsupported. Five optional decoder warnings and the selected member/block list appear under **Loaded source details**. Lightmap pixels remain available in the separate texture preview. Their shader coordinate interpretation is unverified, so lightmaps are not applied to lighting.
 
-Material references are resolved within each source member. Identical key/dimension/pixel payloads can share a texture-array layer. Same-key payload variants remain separate; the loader does not borrow an unrelated cell's texture when a local reference is unresolved. Duplicate local definitions are treated as ambiguous and kept plain. The renderer accommodates up to 64 diffuse assets plus the white fallback layer, retaining its current 64 × 64 normalized preview layers.
+References resolve within each source member. Identical key/dimension/pixel payloads may share a texture-array layer; same-key local variants remain separate. Unresolved references do not borrow unrelated cells' textures. Duplicate local definitions are ambiguous and kept plain. Up to 64 diffuse assets plus the white fallback layer fit the renderer, with the existing 64 × 64 normalized preview layers.
 
-The worker indexes the disc and archive once. Required geometry errors abort the new load. Optional texture decoding and arena failures produce warnings and plain materials. Limits are 512 scanned blocks, 128 MiB aggregate block work charged by the larger of stored/decoded sizes (including failed attempts), 64 MiB per block, 20,000 render triangles, 100,000 vertices, 4,096 meshes, 64 textures, 32 MiB of decoded texture pixels, and 32 detailed warnings. Size-budget failures remain hard errors. No geometry or pixels are exported.
+The worker indexes the disc/archive once. Required geometry errors abort the new load; optional texture decoding and arena errors produce warnings and plain materials. Limits are 512 scanned blocks, 128 MiB aggregate block work charged by the larger of stored/decoded sizes (including failures), 64 MiB per block, 20,000 render triangles, 100,000 vertices, 4,096 meshes, 64 textures, 32 MiB decoded pixels, and 32 detailed warnings. Budget failures remain hard errors. No geometry or pixels are exported.
 
 ## Verification
 
-Synthetic checks cover the expanded exact vertex declarations, padded material tables, preserving native seam vertices, shared render/collision placement, identical versus variant texture payloads, and optional codec failure without bypassing budgets. The opt-in ISO test checks all six selected batches, their counts, texture-layer bounds, collision placement, and an ollie/landing on the assembled preview. Native GPU checks render all 64 meshes and 3,481 triangles with 32 linked diffuse maps, and a synthetic layer-10 test checks higher texture-array indices, repeating UVs, occlusion, and compositing. Manual visual interaction with the latest UI remains pending.
+Synthetic checks cover declarations, padded material tables, native seams, shared placement, texture variants, optional codec failures and budgets, source-only holes and bounds, stale grounded state, recovery scoring, and exclusion of invisible course rails. ISO tests check selected counts, texture-layer bounds, placement, a 20.024-source-unit ride across a cell boundary, and an ollie landing. Native GPU tests render both the miniature and source-scale neighborhood from a skating camera. A synthetic layer-10 test also verifies repeating UVs, depth, and compositing. Visual UI interaction is recorded separately from these GPU checks.
 
 ```powershell
 cargo run -p skate-threecomp-launcher --bin skate-threecomp-inspect -- "D:\Games\Skate 3.iso" --neighborhood-sample
@@ -34,4 +37,4 @@ $env:THREECOMP_TEST_ISO = "D:\Games\Skate 3.iso"
 cargo test --workspace -- --ignored --nocapture
 ```
 
-The inspector reports counts, source batches, bounds, collision statistics, texture coverage, and warnings as JSON. It does not emit vertices or pixels.
+The JSON report includes selected batches, counts, bounds, texture coverage, warnings, and source-scale availability/spawn/collision data. It emits no vertices or pixels.

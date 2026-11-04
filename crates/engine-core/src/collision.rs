@@ -1,11 +1,24 @@
 //! Original bounded triangle queries for the small imported prototype sample.
 use crate::{
     geometry::Sample,
-    skating::{Vec3, ground_height},
+    rails::{BOARD_HEIGHT, COURSE_RAILS, Rail},
+    skating::{COURSE_X, COURSE_Z, Vec3, ground_height},
 };
 
 pub trait Terrain {
     fn height(&self, x: f32, z: f32, ceiling: f32) -> f32;
+    fn support(&self, x: f32, z: f32, ceiling: f32) -> Option<f32> {
+        Some(self.height(x, z, ceiling))
+    }
+    fn contains_motion(&self, _from: Vec3, to: Vec3) -> bool {
+        to.x.is_finite()
+            && to.z.is_finite()
+            && to.x.abs() <= COURSE_X - 0.5
+            && to.z.abs() <= COURSE_Z - 0.5
+    }
+    fn rails(&self) -> &[Rail] {
+        &[]
+    }
     fn blocks_motion(&self, from: Vec3, to: Vec3) -> bool;
 }
 pub struct World<'a> {
@@ -21,6 +34,47 @@ impl Terrain for World<'_> {
     fn blocks_motion(&self, from: Vec3, to: Vec3) -> bool {
         self.mesh.is_some_and(|mesh| mesh.blocks_motion(from, to))
     }
+    fn rails(&self) -> &[Rail] {
+        &COURSE_RAILS
+    }
+}
+
+/// Source geometry alone supplies support; gaps never acquire a synthetic floor.
+/// Invalid bounds make support and movement unavailable rather than unbounded.
+pub struct SourceWorld<'a> {
+    pub mesh: &'a TriangleMesh,
+    pub min: Vec3,
+    pub max: Vec3,
+}
+impl SourceWorld<'_> {
+    fn contains_xz(&self, x: f32, z: f32) -> bool {
+        [self.min, self.max]
+            .iter()
+            .all(|p| [p.x, p.y, p.z].iter().all(|v| v.is_finite()))
+            && self.min.x <= self.max.x
+            && self.min.y <= self.max.y
+            && self.min.z <= self.max.z
+            && x.is_finite()
+            && z.is_finite()
+            && (self.min.x..=self.max.x).contains(&x)
+            && (self.min.z..=self.max.z).contains(&z)
+    }
+}
+impl Terrain for SourceWorld<'_> {
+    fn height(&self, x: f32, z: f32, ceiling: f32) -> f32 {
+        self.support(x, z, ceiling).unwrap_or(f32::NEG_INFINITY)
+    }
+    fn support(&self, x: f32, z: f32, ceiling: f32) -> Option<f32> {
+        self.contains_xz(x, z)
+            .then(|| self.mesh.height(x, z, ceiling))
+            .flatten()
+    }
+    fn contains_motion(&self, _from: Vec3, to: Vec3) -> bool {
+        to.y.is_finite() && self.contains_xz(to.x, to.z)
+    }
+    fn blocks_motion(&self, from: Vec3, to: Vec3) -> bool {
+        self.mesh.blocks_motion(from, to)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -31,6 +85,31 @@ struct Triangle {
     normal: Vec3,
     min: Vec3,
     max: Vec3,
+}
+impl Triangle {
+    fn vertical_height(&self, x: f32, z: f32) -> Option<f32> {
+        if x < self.min.x - 1e-5
+            || x > self.max.x + 1e-5
+            || z < self.min.z - 1e-5
+            || z > self.max.z + 1e-5
+        {
+            return None;
+        }
+        let ab = self.b - self.a;
+        let ac = self.c - self.a;
+        let determinant = ab.x * ac.z - ab.z * ac.x;
+        if determinant.abs() < 1e-8 {
+            return None;
+        }
+        let dx = x - self.a.x;
+        let dz = z - self.a.z;
+        let u = (dx * ac.z - dz * ac.x) / determinant;
+        let v = (ab.x * dz - ab.z * dx) / determinant;
+        if u < -1e-5 || v < -1e-5 || u + v > 1.0 + 1e-5 {
+            return None;
+        }
+        Some(self.a.y + u * ab.y + v * ac.y)
+    }
 }
 #[derive(Debug, Clone)]
 pub struct TriangleMesh {
@@ -126,25 +205,12 @@ impl TriangleMesh {
         }
         let mut best: Option<f32> = None;
         for t in &self.triangles {
-            if t.normal.y.abs() < 0.64
-                || x < t.min.x - 1e-5
-                || x > t.max.x + 1e-5
-                || z < t.min.z - 1e-5
-                || z > t.max.z + 1e-5
-            {
+            if t.normal.y.abs() < 0.64 {
                 continue;
             }
-            let ab = t.b - t.a;
-            let ac = t.c - t.a;
-            let determinant = ab.x * ac.z - ab.z * ac.x;
-            let dx = x - t.a.x;
-            let dz = z - t.a.z;
-            let u = (dx * ac.z - dz * ac.x) / determinant;
-            let v = (ab.x * dz - ab.z * dx) / determinant;
-            if u < -1e-5 || v < -1e-5 || u + v > 1.0 + 1e-5 {
+            let Some(y) = t.vertical_height(x, z) else {
                 continue;
-            }
-            let y = t.a.y + u * ab.y + v * ac.y;
+            };
             if y <= ceiling + 1e-5 && best.is_none_or(|previous| y > previous) {
                 best = Some(y);
             }
@@ -201,12 +267,161 @@ impl TriangleMesh {
             .max_by(|a, b| a.y.total_cmp(&b.y))
             .map(|p| p + Vec3::new(0.0, 0.12, 0.0))
     }
+    /// A low source-surface spawn with a supported board footprint and two
+    /// source units of vertical clearance. This remains derived visual geometry,
+    /// not proof that the original game marked the surface as skateable.
+    pub fn ground_spawn(&self) -> Option<Vec3> {
+        let mut candidates: Vec<_> = self
+            .triangles
+            .iter()
+            .filter_map(|t| {
+                let area = ((t.b - t.a).cross(t.c - t.a)).y.abs();
+                // Half a square source unit of projected area, at most ~26 degrees.
+                if t.normal.y.abs() < 0.9 || area < 1.0 {
+                    return None;
+                }
+                let surface = (t.a + t.b + t.c) * (1.0 / 3.0);
+                Some((surface, area))
+            })
+            .collect();
+        candidates.sort_by(|(a, area_a), (b, area_b)| {
+            a.y.total_cmp(&b.y)
+                .then_with(|| area_b.total_cmp(area_a))
+                .then_with(|| a.x.total_cmp(&b.x))
+                .then_with(|| a.z.total_cmp(&b.z))
+        });
+        // Test candidates in selection order, stopping at the first safe one.
+        candidates.into_iter().find_map(|(surface, _)| {
+            if (self.height(surface.x, surface.z, surface.y + 0.2)? - surface.y).abs() > 0.001 {
+                return None;
+            }
+            let board = surface + Vec3::new(0.0, BOARD_HEIGHT, 0.0);
+            for (dx, dz) in [(0., 0.), (-0.18, 0.), (0.18, 0.), (0., -0.18), (0., 0.18)] {
+                let x = surface.x + dx;
+                let z = surface.z + dz;
+                let floor = self.height(x, z, surface.y + 0.2)?;
+                if (floor - surface.y).abs() > 0.2
+                    || self.triangles.iter().any(|other| {
+                        other.vertical_height(x, z).is_some_and(|ceiling| {
+                            ceiling > floor + 0.0001 && ceiling < floor + 2.0
+                        })
+                    })
+                    || self.blocks_motion(board, Vec3::new(x, board.y, z))
+                {
+                    return None;
+                }
+            }
+            Some(board)
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::skating::{FIXED_DT, Input, Skater};
+    fn square(x: f32, z: f32, y: f32, half: f32) -> [[Vec3; 3]; 2] {
+        let a = Vec3::new(x - half, y, z - half);
+        let b = Vec3::new(x + half, y, z - half);
+        let c = Vec3::new(x - half, y, z + half);
+        let d = Vec3::new(x + half, y, z + half);
+        [[a, b, c], [b, d, c]]
+    }
+    #[test]
+    fn source_world_preserves_holes_and_support_ceiling_without_course_rails() {
+        let mesh = TriangleMesh::from_triangles(&square(0., 0., 3., 2.)).unwrap();
+        let world = SourceWorld {
+            mesh: &mesh,
+            min: Vec3::new(-4., 0., -4.),
+            max: Vec3::new(4., 4., 4.),
+        };
+        assert_eq!(world.support(0., 0., 4.), Some(3.));
+        assert_eq!(world.support(0., 0., 2.), None);
+        assert_eq!(world.support(3., 0., 4.), None);
+        assert_eq!(world.height(3., 0., 4.), f32::NEG_INFINITY);
+        assert!(world.rails().is_empty());
+        let original = World { mesh: None };
+        assert_eq!(
+            original.support(0., 10., 100.),
+            Some(ground_height(0., 10.))
+        );
+        assert_eq!(original.rails(), &COURSE_RAILS);
+    }
+    #[test]
+    fn source_bounds_are_inclusive_finite_and_independent_of_course_limits() {
+        let mesh = TriangleMesh::from_triangles(&square(100., 100., 0., 3.)).unwrap();
+        let world = SourceWorld {
+            mesh: &mesh,
+            min: Vec3::new(99., 0., 99.),
+            max: Vec3::new(101., 0., 101.),
+        };
+        assert!(world.contains_motion(Vec3::default(), Vec3::new(101., 2., 100.)));
+        assert!(!world.contains_motion(Vec3::default(), Vec3::new(101.01, 2., 100.)));
+        assert!(!world.contains_motion(Vec3::default(), Vec3::new(100., f32::NAN, 100.)));
+        assert_eq!(world.support(102., 100., 2.), None);
+        let original = World { mesh: None };
+        assert!(original.contains_motion(Vec3::default(), Vec3::new(COURSE_X - 0.5, 0., 0.)));
+        assert!(!original.contains_motion(Vec3::default(), Vec3::new(COURSE_X, 0., 0.)));
+        for (min, max) in [
+            (Vec3::new(f32::NAN, 0., 99.), world.max),
+            (Vec3::new(102., 0., 99.), world.max),
+        ] {
+            let invalid = SourceWorld {
+                mesh: &mesh,
+                min,
+                max,
+            };
+            assert_eq!(invalid.support(100., 100., 2.), None);
+            assert!(!invalid.contains_motion(Vec3::default(), Vec3::new(100., 0., 100.)));
+        }
+    }
+    #[test]
+    fn ground_spawn_chooses_low_substantial_surface_before_roofs_and_small_details() {
+        let mut faces = square(0., 0., 0., 2.).to_vec();
+        faces.extend(square(0., 0., 3., 2.));
+        faces.extend(square(10., 0., -2., 0.1));
+        let mesh = TriangleMesh::from_triangles(&faces).unwrap();
+        let spawn = mesh.ground_spawn().unwrap();
+        assert!((spawn.y - BOARD_HEIGHT).abs() < 1e-6);
+        assert!(spawn.x.abs() < 2. && spawn.z.abs() < 2.);
+        assert!((mesh.placement().unwrap().y - (3. + BOARD_HEIGHT)).abs() < 1e-6);
+    }
+    #[test]
+    fn ground_spawn_requires_headroom_and_supported_board_footprint() {
+        let mut faces = square(0., 0., 0., 2.).to_vec();
+        faces.extend(square(0., 0., 1.5, 2.));
+        faces.extend(square(10., 0., 0., 2.));
+        let mesh = TriangleMesh::from_triangles(&faces).unwrap();
+        let spawn = mesh.ground_spawn().unwrap();
+        assert!((spawn.y - BOARD_HEIGHT).abs() < 1e-6);
+        assert!(
+            spawn.x > 8.,
+            "The low ceiling excludes the first ground patch"
+        );
+        let narrow = TriangleMesh::from_triangles(&[[
+            Vec3::new(-0.05, 0., -20.),
+            Vec3::new(0.05, 0., -20.),
+            Vec3::new(0., 0., 20.),
+        ]])
+        .unwrap();
+        assert!(narrow.ground_spawn().is_none());
+    }
+    #[test]
+    fn ground_spawn_breaks_equal_height_ties_by_projected_area() {
+        let mut faces = square(0., 0., 0., 1.).to_vec();
+        faces.extend(square(10., 0., 0., 3.));
+        let forward = TriangleMesh::from_triangles(&faces)
+            .unwrap()
+            .ground_spawn()
+            .unwrap();
+        faces.reverse();
+        let reversed = TriangleMesh::from_triangles(&faces)
+            .unwrap()
+            .ground_spawn()
+            .unwrap();
+        assert_eq!(forward, reversed);
+        assert!(forward.x > 7.);
+    }
     #[test]
     fn sloped_support_is_independent_of_triangle_winding() {
         let a = Vec3::new(0., 0., 0.);
