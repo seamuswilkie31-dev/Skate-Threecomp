@@ -24,7 +24,7 @@ Texture keys are read from explicit `0x<16 hex digits>.Texture` names and compar
 
 ## Accepted profiles and limits
 
-- BC1: power-of-two width and height from 128 through 4,096, matching pitch, tiled, byte-order mode 1, unsigned identity channels, no packed-mip flag or nonzero base offsets.
+- BC1: power-of-two width and height from 128 through 4,096, matching pitch, tiled, byte-order mode 1, unsigned identity channels, no forced-alpha override, packed-mip flag, or nonzero base offsets.
 - RGB565: power-of-two width and height from 32 through 4,096, matching pitch, tiled, byte-order mode 1, unsigned observed channel swizzle, zero base level and base resource offset. A packed-mip flag is accepted only because these base dimensions are outside the tail.
 - RGBA output is at most 64 MiB per decoded image. Every input read must fit the checked resource. Unsupported profiles return an error.
 

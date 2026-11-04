@@ -44,7 +44,9 @@
 - [x] Implement fixed-step movement, ramp contact, gravity, and landing tracking.
 - [x] Add native controller input with hotplugging, dead zones, and focus-safe button edges.
 - [x] Animate board flips and detect clean flip/spin landings, switch stance, scores, and simple bails.
-- [ ] Add grinds, richer character animation, and trick chains.
+- [x] Add authored practice rails with 50-50 capture, balance, pop-offs, and distance scoring.
+- [x] Add pending trick chains, multipliers, clean-riding banking, and bail loss.
+- [ ] Add other grind types, game-data rails, richer character animation, and a broader trick vocabulary.
 - [x] Build a dedicated depth-buffered 3D pass and composite it into the native launcher.
 - [x] Connect a bounded real-game mesh sample to a native visual preview.
 - [x] Connect the imported sample to shallow-surface support and swept wall probes with shared render transforms.

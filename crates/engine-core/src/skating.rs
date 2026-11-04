@@ -1,5 +1,9 @@
 //! Original skating movement for a synthetic course, independent of game assets.
 
+use crate::{
+    rails::{self, COURSE_RAILS, Grind, Rail},
+    tricks::{BANK_DELAY, Combo},
+};
 use std::ops::{Add, Mul, Sub};
 
 pub const FIXED_DT: f32 = 1.0 / 120.0;
@@ -57,6 +61,7 @@ pub struct Input {
     pub ollie: bool,
     pub flip: bool,
     pub spin: f32,
+    pub grind: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -71,6 +76,10 @@ pub struct Skater {
     pub airtime: f32,
     pub last_airtime: f32,
     pub score: u32,
+    pub combo: Combo,
+    pub last_combo: u32,
+    pub grind: Option<Grind>,
+    grind_cooldown: f32,
     pub last_trick: &'static str,
     /// Displayed board roll during an active flip.
     pub board_roll: f32,
@@ -95,6 +104,10 @@ impl Default for Skater {
             airtime: 0.0,
             last_airtime: 0.0,
             score: 0,
+            combo: Combo::default(),
+            last_combo: 0,
+            grind: None,
+            grind_cooldown: 0.0,
             last_trick: "Ready",
             board_roll: 0.0,
             flip_time: None,
@@ -131,20 +144,84 @@ impl Skater {
         self.step_on(input, dt, &crate::collision::World { mesh: None });
     }
     pub fn step_on(&mut self, input: Input, dt: f32, terrain: &impl crate::collision::Terrain) {
-        if !dt.is_finite() || !(0.0..=1.0 / 30.0).contains(&dt) {
+        self.step_with_rails(input, dt, terrain, &COURSE_RAILS);
+    }
+    pub fn step_with_rails(
+        &mut self,
+        input: Input,
+        dt: f32,
+        terrain: &impl crate::collision::Terrain,
+        rails: &[Rail],
+    ) {
+        if !dt.is_finite() || dt <= 0.0 || dt > 1.0 / 30.0 {
             return;
         }
-        let was_grounded = self.grounded;
+        self.grind_cooldown = (self.grind_cooldown - dt).max(0.0);
         if self.bail_time > 0.0 {
             self.bail_time = (self.bail_time - dt).max(0.0);
             self.speed = 0.0;
+            // A rail bail falls to the floor during recovery instead of hanging
+            // motionless at rail height. Grounded bails remain on their surface.
+            let floor = terrain.height(self.position.x, self.position.z, self.position.y + 0.08)
+                + rails::BOARD_HEIGHT;
+            if !self.grounded {
+                self.vertical_speed -= 16.0 * dt;
+                self.position.y += self.vertical_speed * dt;
+            }
+            if self.position.y <= floor || self.grounded {
+                self.position.y = floor;
+                self.vertical_speed = 0.0;
+                self.grounded = true;
+            }
             return;
+        }
+        if self.grounded && !input.ollie {
+            let banked = self.combo.ride(dt);
+            if banked > 0 {
+                self.score = self.score.saturating_add(banked);
+                self.last_combo = banked;
+            }
         }
         let steer = if input.steer.is_finite() {
             input.steer.clamp(-1.0, 1.0)
         } else {
             0.0
         };
+        if let Some(mut grind) = self.grind.take() {
+            // Pop takes precedence when the hold button is released this tick.
+            if input.ollie || !input.grind {
+                self.exit_grind(grind, input.ollie);
+            } else {
+                let (axis, length) = grind.rail.axis().expect("Captured rail was validated");
+                self.speed = (self.speed - (if input.brake { 9.0 } else { 0.6 }) * dt).max(0.0);
+                let previous = grind.along;
+                grind.along = (grind.along + grind.direction * self.speed * dt).clamp(0.0, length);
+                let next = grind.rail.board_position(grind.along).unwrap();
+                if next.x.abs() > COURSE_X - 0.5
+                    || next.z.abs() > COURSE_Z - 0.5
+                    || terrain.blocks_motion(self.position, next)
+                {
+                    self.bail("Bail · rail path blocked");
+                    return;
+                }
+                grind.distance += (grind.along - previous).abs();
+                grind.time += dt;
+                grind.balance += (steer * 1.4 + 0.18 + 0.12 * (grind.time * 2.4).sin()) * dt;
+                self.position = next;
+                let heading = axis * grind.direction;
+                self.travel_yaw = heading.x.atan2(heading.z);
+                if grind.balance.abs() >= 1.0 {
+                    self.bail("Bail · grind balance lost");
+                } else if grind.along <= 0.0 || grind.along >= length || self.speed < 0.75 {
+                    self.exit_grind(grind, false);
+                } else {
+                    self.grind = Some(grind);
+                }
+                return;
+            }
+        }
+        let was_grounded = self.grounded;
+        let previous_position = self.position;
         if self.grounded {
             self.yaw += steer * (0.6 + self.speed * 0.09) * dt;
         } else {
@@ -233,6 +310,47 @@ impl Skater {
             self.airtime += dt;
             self.vertical_speed -= 16.0 * dt;
             self.position.y += self.vertical_speed * dt;
+            if input.grind
+                && self.grind_cooldown <= 0.0
+                && self.clean_rotation()
+                && let Some(hit) = rails::capture(
+                    rails,
+                    previous_position,
+                    self.position,
+                    self.travel_direction(),
+                    self.speed,
+                )
+                && !terrain.blocks_motion(previous_position, self.position)
+                && let Some(contact) = rails[hit.rail_index].board_position(hit.along)
+                && !terrain.blocks_motion(self.position, contact)
+            {
+                self.finish_trick();
+                self.last_airtime = self.airtime;
+                self.speed = hit.speed;
+                let rail = rails[hit.rail_index];
+                let (axis, _) = rail.axis().unwrap();
+                let heading = axis * hit.direction;
+                self.travel_yaw = heading.x.atan2(heading.z);
+                self.yaw = self.travel_yaw
+                    - if self.switch_stance {
+                        std::f32::consts::PI
+                    } else {
+                        0.0
+                    };
+                self.position = contact;
+                self.vertical_speed = 0.0;
+                self.last_trick = "50-50 grinding";
+                self.grind = Some(Grind {
+                    rail_index: hit.rail_index,
+                    rail,
+                    along: hit.along,
+                    direction: hit.direction,
+                    balance: 0.0,
+                    distance: 0.0,
+                    time: 0.0,
+                });
+                return;
+            }
             if self.position.y <= floor && self.vertical_speed <= 0.0 {
                 self.position.y = floor;
                 self.vertical_speed = 0.0;
@@ -247,6 +365,10 @@ impl Skater {
     }
 
     fn start_air(&mut self, ollie: bool) {
+        self.airtime = 0.0;
+        if self.combo.tricks > 0 {
+            self.combo.remaining = BANK_DELAY;
+        }
         self.air_was_ollie = ollie;
         self.air_start_yaw = self.yaw;
         self.travel_yaw = self.yaw
@@ -263,9 +385,7 @@ impl Skater {
 
     fn finish_trick(&mut self) {
         let half_turns = (self.air_spin / std::f32::consts::PI).round();
-        let error = (self.air_spin - half_turns * std::f32::consts::PI).abs();
-        let clean = self.flip_time.is_none() && error <= 30.0f32.to_radians();
-        if clean {
+        if self.clean_rotation() {
             self.yaw = self.air_start_yaw + half_turns * std::f32::consts::PI;
             self.switch_stance ^= (half_turns.abs() as u32) % 2 == 1;
             self.last_trick = match (self.completed_flips > 0, half_turns.abs() >= 1.0) {
@@ -281,17 +401,45 @@ impl Skater {
                 }
             };
             if self.air_was_ollie || self.completed_flips > 0 || half_turns.abs() >= 1.0 {
-                self.score = self.score.saturating_add(
-                    100 + self.completed_flips * 300 + half_turns.abs() as u32 * 180,
-                );
+                self.combo
+                    .add(100 + self.completed_flips * 300 + half_turns.abs() as u32 * 180);
             }
         } else {
-            self.last_trick = "Bail · rotation unfinished";
-            self.speed = 0.0;
-            self.bail_time = 0.8;
+            self.bail("Bail · rotation unfinished");
         }
         self.board_roll = 0.0;
         self.flip_time = None;
+    }
+
+    fn clean_rotation(&self) -> bool {
+        let half_turns = (self.air_spin / std::f32::consts::PI).round();
+        self.flip_time.is_none()
+            && (self.air_spin - half_turns * std::f32::consts::PI).abs() <= 30.0f32.to_radians()
+    }
+    fn exit_grind(&mut self, grind: Grind, pop: bool) {
+        if grind.distance >= 0.25 {
+            self.combo.add(grind.points());
+        }
+        self.last_trick = if pop {
+            "50-50 pop-off"
+        } else {
+            "50-50 dismount"
+        };
+        self.grind_cooldown = 0.25;
+        self.grounded = false;
+        self.start_air(pop);
+        self.vertical_speed = if pop { 5.0 } else { 0.0 };
+    }
+    fn bail(&mut self, message: &'static str) {
+        self.last_trick = message;
+        self.speed = 0.0;
+        self.vertical_speed = 0.0;
+        self.bail_time = 0.8;
+        self.board_roll = 0.0;
+        self.flip_time = None;
+        self.grind = None;
+        self.grind_cooldown = 0.25;
+        self.combo.clear();
     }
 }
 
@@ -341,11 +489,295 @@ mod tests {
             skater.step(Input::default(), FIXED_DT);
         }
         assert_eq!(skater.last_trick, "Kickflip landed");
-        assert_eq!(skater.score, 400);
-        for _ in 0..120 {
+        assert_eq!(skater.score, 0);
+        assert_eq!(skater.combo.value(), 400);
+        for _ in 0..240 {
             skater.step(Input::default(), FIXED_DT);
         }
         assert_eq!(skater.score, 400);
+    }
+    fn catch_practice_rail(flip: bool) -> Skater {
+        let mut skater = Skater {
+            position: Vec3::new(7.0, 0.12, -4.5),
+            speed: 6.0,
+            ..Skater::default()
+        };
+        skater.step(
+            Input {
+                ollie: true,
+                flip,
+                grind: true,
+                ..Input::default()
+            },
+            FIXED_DT,
+        );
+        for _ in 0..100 {
+            skater.step(
+                Input {
+                    grind: true,
+                    ..Input::default()
+                },
+                FIXED_DT,
+            );
+            if skater.grind.is_some() {
+                return skater;
+            }
+        }
+        panic!("Ollie should catch the practice rail on descent: {skater:?}");
+    }
+    #[test]
+    fn flip_grind_pop_and_landing_link_once_then_bank() {
+        let mut skater = catch_practice_rail(true);
+        assert_eq!(skater.combo.tricks, 1);
+        assert_eq!(skater.combo.base_points, 400);
+        assert!((skater.position.y - 0.77).abs() < 0.001);
+        let start = skater.position.z;
+        for _ in 0..60 {
+            skater.step(
+                Input {
+                    grind: true,
+                    ..Input::default()
+                },
+                FIXED_DT,
+            );
+        }
+        assert!(skater.grind.is_some() && skater.position.z > start + 2.0);
+        let grind_points = skater.grind.as_ref().unwrap().points();
+        // Pop and hold-button release in the same tick must still pop.
+        skater.step(
+            Input {
+                ollie: true,
+                ..Input::default()
+            },
+            FIXED_DT,
+        );
+        assert!(skater.grind.is_none() && skater.vertical_speed > 4.0);
+        assert_eq!(skater.combo.tricks, 2);
+        assert_eq!(skater.combo.base_points, 400 + grind_points);
+        for _ in 0..120 {
+            skater.step(Input::default(), FIXED_DT);
+        }
+        assert!(skater.grounded);
+        assert_eq!(skater.combo.tricks, 3);
+        assert_eq!(skater.combo.base_points, 500 + grind_points);
+        let expected = (500 + grind_points) * 3;
+        for _ in 0..240 {
+            skater.step(Input::default(), FIXED_DT);
+        }
+        assert_eq!(skater.score, expected);
+        assert_eq!(skater.last_combo, expected);
+        assert_eq!(skater.combo.value(), 0);
+        for _ in 0..240 {
+            skater.step(Input::default(), FIXED_DT);
+        }
+        assert_eq!(skater.score, expected);
+    }
+    #[test]
+    fn rail_end_and_release_dismount_without_duplicate_ollie_points() {
+        for release in [true, false] {
+            let mut skater = catch_practice_rail(false);
+            if release {
+                for _ in 0..30 {
+                    skater.step(
+                        Input {
+                            grind: true,
+                            ..Input::default()
+                        },
+                        FIXED_DT,
+                    );
+                }
+                skater.step(Input::default(), FIXED_DT);
+            } else {
+                for _ in 0..300 {
+                    skater.step(
+                        Input {
+                            grind: true,
+                            ..Input::default()
+                        },
+                        FIXED_DT,
+                    );
+                    if skater.grind.is_none() {
+                        break;
+                    }
+                }
+            }
+            assert!(skater.grind.is_none() && !skater.grounded);
+            assert!(skater.grind_cooldown > 0.0);
+            assert_eq!(skater.combo.tricks, 2);
+            let base = skater.combo.base_points;
+            // Held grind after leaving the endpoint cannot recapture that rail.
+            for _ in 0..60 {
+                skater.step(
+                    Input {
+                        grind: true,
+                        ..Input::default()
+                    },
+                    FIXED_DT,
+                );
+            }
+            assert!(skater.grounded && skater.grind.is_none());
+            assert_eq!(skater.combo.base_points, base);
+            assert_eq!(skater.combo.tricks, 2);
+        }
+    }
+    #[test]
+    fn switch_capture_retains_signed_travel_and_camera_heading() {
+        let mut skater = Skater {
+            position: Vec3::new(7., 0.9, 5.),
+            yaw: 0.0,
+            speed: 6.0,
+            vertical_speed: -2.0,
+            grounded: false,
+            switch_stance: true,
+            travel_yaw: std::f32::consts::PI,
+            ..Skater::default()
+        };
+        for _ in 0..15 {
+            skater.step(
+                Input {
+                    grind: true,
+                    ..Input::default()
+                },
+                FIXED_DT,
+            );
+        }
+        assert!(skater.grind.is_some());
+        assert!(skater.travel_direction().z < -0.99);
+        let z = skater.position.z;
+        for _ in 0..15 {
+            skater.step(
+                Input {
+                    grind: true,
+                    ..Input::default()
+                },
+                FIXED_DT,
+            );
+        }
+        assert!(skater.position.z < z - 0.5 && skater.switch_stance);
+    }
+    #[test]
+    fn balance_bail_discards_pending_chain_preserves_bank_and_falls() {
+        let mut skater = catch_practice_rail(false);
+        skater.score = 1234;
+        skater.grind.as_mut().unwrap().balance = 0.999;
+        skater.step(
+            Input {
+                grind: true,
+                steer: 1.0,
+                ..Input::default()
+            },
+            FIXED_DT,
+        );
+        assert!(skater.grind.is_none() && skater.bail_time > 0.0);
+        assert_eq!(skater.combo.value(), 0);
+        assert_eq!(skater.score, 1234);
+        for _ in 0..120 {
+            skater.step(Input::default(), FIXED_DT);
+        }
+        assert!(skater.grounded && skater.bail_time <= 0.0);
+        assert!((skater.position.y - 0.12).abs() < 0.001);
+        assert_eq!(skater.score, 1234);
+    }
+    #[test]
+    fn unfinished_flip_and_unheld_grind_do_not_capture() {
+        for hold in [false, true] {
+            let mut skater = Skater {
+                position: Vec3::new(7., 0.82, 2.),
+                speed: 6.0,
+                vertical_speed: -2.0,
+                grounded: false,
+                flip_time: if hold { Some(0.0) } else { None },
+                ..Skater::default()
+            };
+            for _ in 0..5 {
+                skater.step(
+                    Input {
+                        grind: hold,
+                        ..Input::default()
+                    },
+                    FIXED_DT,
+                );
+            }
+            assert!(skater.grind.is_none());
+        }
+    }
+    #[test]
+    fn new_air_segment_restarts_the_grounded_banking_window() {
+        let mut skater = Skater::default();
+        skater.combo.add(400);
+        for _ in 0..120 {
+            skater.step(Input::default(), FIXED_DT);
+        }
+        assert_eq!(skater.score, 0);
+        skater.step(
+            Input {
+                ollie: true,
+                ..Input::default()
+            },
+            FIXED_DT,
+        );
+        for _ in 0..180 {
+            if skater.grounded {
+                break;
+            }
+            skater.step(Input::default(), FIXED_DT);
+        }
+        assert!(skater.grounded);
+        assert_eq!(skater.combo.value(), 1000);
+        for _ in 0..179 {
+            skater.step(Input::default(), FIXED_DT);
+        }
+        assert_eq!(skater.score, 0);
+        skater.step(Input::default(), FIXED_DT);
+        assert_eq!(skater.score, 1000);
+    }
+    #[test]
+    fn stalled_capture_cannot_award_a_stationary_grind() {
+        let mut skater = catch_practice_rail(false);
+        skater.speed = 0.0;
+        let before = skater.combo.base_points;
+        for _ in 0..60 {
+            skater.step(
+                Input {
+                    grind: true,
+                    ..Input::default()
+                },
+                FIXED_DT,
+            );
+        }
+        assert!(skater.grind.is_none() && skater.grounded);
+        assert_eq!(skater.combo.base_points, before);
+        assert_eq!(skater.combo.tricks, 1);
+    }
+    #[test]
+    fn rail_following_stops_at_an_imported_wall() {
+        let mut skater = catch_practice_rail(false);
+        let z = skater.position.z + 0.5;
+        let mesh = crate::collision::TriangleMesh::from_triangles(&[
+            [
+                Vec3::new(6., 0., z),
+                Vec3::new(8., 0., z),
+                Vec3::new(6., 3., z),
+            ],
+            [
+                Vec3::new(8., 0., z),
+                Vec3::new(8., 3., z),
+                Vec3::new(6., 3., z),
+            ],
+        ])
+        .unwrap();
+        for _ in 0..15 {
+            skater.step_on(
+                Input {
+                    grind: true,
+                    ..Input::default()
+                },
+                FIXED_DT,
+                &crate::collision::World { mesh: Some(&mesh) },
+            );
+        }
+        assert!(skater.position.z < z && skater.bail_time > 0.0 && skater.grind.is_none());
+        assert_eq!(skater.combo.value(), 0);
     }
     #[test]
     fn unfinished_flip_bails_without_awarding_points() {

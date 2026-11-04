@@ -1,4 +1,4 @@
-//! Observed texture metadata and a narrow tiled BC1 base-level decoder.
+//! Observed texture metadata, canonical keys, and narrow tiled base-level decoders.
 use crate::rw4::Arena;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,7 +57,7 @@ pub fn decode_rgb565_mip0(bytes: &[u8], object_index: usize) -> Result<DecodedTe
 }
 /// Canonical key is explicitly named in the texture definition; a single
 /// observed storage flag may differ in the numeric key. Other bits are retained.
-fn texture_key(bytes: &[u8]) -> Result<u64, String> {
+fn texture_identity(bytes: &[u8]) -> Result<(u64, usize), String> {
     let arena = Arena::read(bytes)?;
     let tables: Vec<_> = arena
         .objects
@@ -69,7 +69,15 @@ fn texture_key(bytes: &[u8]) -> Result<u64, String> {
         return Err("Expected one texture definition table.".into());
     }
     let d = arena.object_data(bytes, tables[0].0)?;
-    named_texture_key(d)
+    definition_identity(d, &inspect_textures(bytes)?)
+}
+fn definition_identity(d: &[u8], textures: &[TextureInfo]) -> Result<(u64, usize), String> {
+    let key = named_texture_key(d)?;
+    let object_index = word(d, 40) as usize;
+    if textures.len() != 1 || textures[0].object_index != object_index {
+        return Err("Texture definition does not reference the sole texture descriptor.".into());
+    }
+    Ok((key, object_index))
 }
 fn named_texture_key(d: &[u8]) -> Result<u64, String> {
     if d.len() < 44
@@ -77,6 +85,8 @@ fn named_texture_key(d: &[u8]) -> Result<u64, String> {
         || word(d, 4) != 20
         || word(d, 8) != 44
         || word(d, 20) != 44
+        || word(d, 24) != 0x9b0f1678
+        || word(d, 36) != 0xac462e4a
         || word(d, 16) as usize != d.len()
     {
         return Err("Unsupported texture key table.".into());
@@ -106,14 +116,10 @@ pub fn load_retail_diffuse_textures(image: &std::path::Path) -> Result<Vec<Textu
         (7, 0x2c70170a00050227),
     ] {
         let bytes = crate::geometry::load_retail_block(image, block)?;
-        let key = texture_key(&bytes)?;
+        let (key, object_index) = texture_identity(&bytes)?;
         if key != expected {
             return Err("Retail diffuse sample key differs from the researched profile.".into());
         }
-        let object_index = inspect_textures(&bytes)?
-            .first()
-            .ok_or("Missing diffuse descriptor.")?
-            .object_index;
         assets.push(TextureAsset {
             key,
             pixels: decode_rgb565_mip0(&bytes, object_index)?,
@@ -137,6 +143,7 @@ pub fn decode_bc1_mip0(bytes: &[u8], object_index: usize) -> Result<DecodedTextu
         || info.fetch_words[0] & 0x3fc != 0
         || info.fetch_words[1] >> 12 != 0
         || info.fetch_words[5] >> 12 != 0
+        || info.fetch_words[5] & 4 != 0
         || info.fetch_words[3] & 0x7ffff != 0xd10
         || (info.fetch_words[4] >> 2) & 15 != 0
     {
@@ -232,14 +239,29 @@ mod tests {
                 (8, 44),
                 (16, 72),
                 (20, 44),
+                (24, 0x9b0f1678),
                 (28, (stored >> 32) as u32),
                 (32, stored as u32),
+                (36, 0xac462e4a),
             ] {
                 put(&mut blob, offset, value);
             }
             let name = format!("0x{name_key:016x}.Texture");
             blob[44..70].copy_from_slice(name.as_bytes());
             assert_eq!(named_texture_key(&blob).unwrap(), name_key);
+            let textures = inspect_textures(&fixture()).unwrap();
+            assert_eq!(
+                definition_identity(&blob, &textures).unwrap(),
+                (name_key, 0)
+            );
+            let mut bad_link = blob.clone();
+            put(&mut bad_link, 40, 99);
+            assert!(definition_identity(&bad_link, &textures).is_err());
+            for field in [24, 36] {
+                let mut bad_kind = blob.clone();
+                put(&mut bad_kind, field, 0);
+                assert!(named_texture_key(&bad_kind).is_err());
+            }
             blob[32] ^= 1;
             assert!(named_texture_key(&blob).is_err());
         }
@@ -302,6 +324,7 @@ mod tests {
         put(&mut bytes, 172 + 48, 0x200);
         for (offset, value) in [
             (172 + 48, 0x8a00),
+            (172 + 48, 0x204),
             (172 + 32, 0x54),
             (172 + 28, 0x02000002),
             (172 + 32, 0x92),

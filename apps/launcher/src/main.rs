@@ -1,3 +1,8 @@
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
+
 use std::{
     fs,
     io::{BufWriter, Write},
@@ -267,7 +272,7 @@ impl eframe::App for Launcher {
                 if ui.button("Open skating prototype").clicked() {
                     self.playground = Some(playground::Playground::new(self.target_format,self.settings.source_path.clone()));
                 }
-                ui.label(egui::RichText::new("Ride an original test course with keyboard movement and ollies.").size(12.0));
+                ui.label(egui::RichText::new("Ride the original course: flips, spins, practice rails, and trick chains. Keyboard + controller.").size(12.0));
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     let play = egui::Button::new(egui::RichText::new("PLAY  ·  NOT AVAILABLE YET").strong().color(egui::Color32::from_rgb(88, 98, 94)))
@@ -300,7 +305,19 @@ fn card(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
         .show(ui, add_contents);
 }
 
-fn main() -> eframe::Result<()> {
+fn main() {
+    if let Err(error) = run() {
+        rfd::MessageDialog::new()
+            .set_level(rfd::MessageLevel::Error)
+            .set_title("Skate Threecomp could not start")
+            .set_description(format!(
+                "The native window or graphics backend could not initialize.\n\n{error}"
+            ))
+            .show();
+    }
+}
+
+fn run() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([820.0, 660.0])

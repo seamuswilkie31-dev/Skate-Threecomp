@@ -88,6 +88,7 @@ impl Controllers {
                 flip: edges & 2 != 0,
                 spin: f32::from(pad.is_pressed(Button::RightTrigger))
                     - f32::from(pad.is_pressed(Button::LeftTrigger)),
+                grind: pad.is_pressed(Button::LeftTrigger2),
             },
             reset: edges & 4 != 0,
             menu: edges & 8 != 0,

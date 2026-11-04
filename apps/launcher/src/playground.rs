@@ -8,6 +8,7 @@ use std::{
 };
 use threecomp_engine_core::collision::{Terrain, TriangleMesh, World};
 use threecomp_engine_core::geometry::{self, Sample};
+use threecomp_engine_core::rails::COURSE_RAILS;
 use threecomp_engine_core::skating::{FIXED_DT, Input, Skater, Vec3, ground_height};
 use threecomp_engine_core::texture::{self, DecodedTexture};
 
@@ -234,6 +235,14 @@ impl Playground {
                     reset.surrender_focus();
                     self.reset();
                 }
+                let practice = ui.button("Rail practice").on_hover_text("Start moving toward the first rail. Hold G (pad LT) and tap Space (pad X) to hop onto it.");
+                if practice.clicked() {
+                    practice.surrender_focus();
+                    self.reset();
+                    self.skater.position = v(7.0, 0.12, -4.5);
+                    self.skater.speed = 6.0;
+                    self.reset_camera();
+                }
                 let load = ui.add_enabled(
                     self.source.is_some() && self.sample_job.is_none(),
                     egui::Button::new("Load game mesh sample"),
@@ -286,12 +295,14 @@ impl Playground {
             ui.small(&self.controllers.status);
         });
         egui::TopBottomPanel::bottom("prototype_controls").show(ctx, |ui| {
-            ui.label("W/S Push/brake · A/D Steer · Space Ollie · F Flip · Q/E Air spin · R Reset");
-            ui.small("Pad: stick Steer · A Push · B Brake · X Ollie · Y Flip · LB/RB Spin · Start Reset · Back Launcher");
+            ui.label("W/S Push/brake · A/D Steer/balance · Space Ollie/pop · F Flip · Q/E Spin · Hold G Grind · R Reset");
+            ui.small("Pad: stick Steer/balance · A Push · B Brake · X Ollie/pop · Y Flip · LB/RB Spin · Hold LT Grind · Start Reset · Back Launcher");
             ui.horizontal(|ui| {
                 ui.strong(format!("{:.1} km/h", self.skater.speed * 3.6));
                 ui.separator();
-                ui.label(if self.skater.bail_time>0.0 { "BAIL" } else if self.skater.grounded {
+                ui.label(if self.skater.bail_time>0.0 { "BAIL" } else if self.skater.grind.is_some() {
+                    "GRINDING"
+                } else if self.skater.grounded {
                     "RIDING"
                 } else {
                     "AIRBORNE"
@@ -301,7 +312,24 @@ impl Playground {
                     self.skater.landings, self.skater.last_airtime
                 ));
             });
-            ui.label(format!("Score: {} · {} · {}",self.skater.score,self.skater.last_trick,if self.skater.switch_stance { "Switch" } else { "Regular" }));
+            ui.label(format!("Banked: {} · Last chain: {} · {} · {}",self.skater.score,self.skater.last_combo,self.skater.last_trick,if self.skater.switch_stance { "Switch" } else { "Regular" }));
+            if let Some(grind) = &self.skater.grind {
+                ui.horizontal(|ui| {
+                    ui.label(format!("50-50 · {:.1} m · {} pending rail points", grind.distance, grind.points()));
+                    balance_meter(ui, grind.balance);
+                });
+            }
+            if self.skater.combo.tricks > 0 {
+                let combo = &self.skater.combo;
+                ui.horizontal(|ui| {
+                    ui.strong(format!("CHAIN {} × {} = {}", combo.base_points, combo.multiplier(), combo.value()));
+                    ui.label(if self.skater.grounded {
+                        format!("Banks in {:.1}s of riding", combo.remaining)
+                    } else {
+                        "Keep it clean · ride to bank".into()
+                    });
+                });
+            }
         });
         let (dt, focused, reset, escape, jump, flip, mut input) = ctx.input(|i| {
             let left = i.key_down(egui::Key::A) || i.key_down(egui::Key::ArrowLeft);
@@ -320,12 +348,14 @@ impl Playground {
                     ollie: false,
                     flip: false,
                     spin: f32::from(i.key_down(egui::Key::E)) - f32::from(i.key_down(egui::Key::Q)),
+                    grind: i.key_down(egui::Key::G),
                 },
             )
         });
         let controller = self.controllers.poll(focused);
         input.push |= controller.input.push;
         input.brake |= controller.input.brake;
+        input.grind |= controller.input.grind;
         input.steer = (input.steer + controller.input.steer).clamp(-1.0, 1.0);
         input.spin = (input.spin + controller.input.spin).clamp(-1.0, 1.0);
         if reset || controller.reset {
@@ -435,6 +465,43 @@ impl Playground {
                         [218, 231, 185],
                     );
                 }
+                for (index, rail) in COURSE_RAILS.iter().enumerate() {
+                    let (axis, length) = rail.axis().unwrap();
+                    let yaw = axis.x.atan2(axis.z);
+                    let active = self
+                        .skater
+                        .grind
+                        .as_ref()
+                        .is_some_and(|g| g.rail_index == index);
+                    let color = if active {
+                        [194, 239, 97]
+                    } else {
+                        [222, 192, 108]
+                    };
+                    scene.cuboid(
+                        (rail.start + rail.end) * 0.5 + v(0.0, -0.055, 0.0),
+                        v(0.12, 0.11, length),
+                        yaw,
+                        color,
+                    );
+                    for fraction in [0.15, 0.5, 0.85] {
+                        let point = rail.start + axis * (length * fraction);
+                        let height = rail.start.y - 0.11;
+                        scene.cuboid(
+                            v(point.x, height * 0.5, point.z),
+                            v(0.12, height, 0.12),
+                            yaw,
+                            [102, 115, 121],
+                        );
+                    }
+                    let approach = rail.start - axis * 3.0;
+                    scene.cuboid(
+                        v(approach.x, 0.02, approach.z),
+                        v(0.45, 0.02, 1.2),
+                        yaw,
+                        color,
+                    );
+                }
                 let p = self.skater.position;
                 let yaw = self.skater.yaw;
                 let surface = World {
@@ -471,7 +538,11 @@ impl Playground {
                         [44, 58, 77],
                     );
                 }
-                let lean = input.steer * 0.12;
+                let lean = self
+                    .skater
+                    .grind
+                    .as_ref()
+                    .map_or(input.steer * 0.12, |g| g.balance * 0.22);
                 scene.cuboid(
                     p + rotate(v(lean, 0.94, 0.0), yaw),
                     v(0.45, 0.65, 0.3),
@@ -551,6 +622,28 @@ impl Playground {
         }));
         playing
     }
+}
+
+fn balance_meter(ui: &mut egui::Ui, balance: f32) {
+    ui.label("Balance");
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(160.0, 16.0), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 4.0, Color32::from_rgb(117, 59, 55));
+    let safe = Rect::from_min_max(
+        Pos2::new(rect.left() + rect.width() * 0.2, rect.top()),
+        Pos2::new(rect.right() - rect.width() * 0.2, rect.bottom()),
+    );
+    painter.rect_filled(safe, 0.0, Color32::from_rgb(59, 103, 86));
+    painter.line_segment(
+        [rect.center_top(), rect.center_bottom()],
+        egui::Stroke::new(1.0_f32, Color32::WHITE),
+    );
+    let x = rect.left() + ((balance.clamp(-1.0, 1.0) + 1.0) * 0.5) * rect.width();
+    painter.rect_filled(
+        Rect::from_center_size(Pos2::new(x, rect.center().y), Vec2::new(4.0, 20.0)),
+        1.0,
+        Color32::from_rgb(222, 240, 146),
+    );
 }
 
 fn v(x: f32, y: f32, z: f32) -> Vec3 {

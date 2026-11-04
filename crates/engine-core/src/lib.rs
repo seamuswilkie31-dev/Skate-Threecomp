@@ -12,10 +12,12 @@ mod bc1;
 pub mod collision;
 pub mod geometry;
 pub mod materials;
+pub mod rails;
 mod rgb565;
 pub mod rw4;
 pub mod skating;
 pub mod texture;
+pub mod tricks;
 
 use std::{
     collections::HashSet,

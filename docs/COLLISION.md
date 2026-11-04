@@ -14,7 +14,7 @@ The simulation still advances at 120 Hz. Landing and trick evaluation use the qu
 
 ## Scope and validation
 
-This is point support plus horizontal probes, not a capsule solver, a skateboard rigid-body model, or the game's original collision representation. Vertical head/ceiling contact, wall sliding, rounded edge contact, moving objects, rails, and continuous full-body collision remain pending. Narrow surfaces and corners can behave approximately. Imported render geometry can include surfaces that the original game did not intend to be collidable.
+This is point support plus horizontal probes, not a capsule solver, a skateboard rigid-body model, or the game's original collision representation. Vertical head/ceiling contact, wall sliding, rounded edge contact, moving objects, game-data rails, and continuous full-body collision remain pending. Authored [practice rails](GAMEPLAY.md) use a separate descending-capture and rail-follow constraint, with the same wall probes guarding their motion. Narrow surfaces and corners can behave approximately. Imported render geometry can include surfaces that the original game did not intend to be collidable.
 
 Construction rejects invalid coordinates/indexes, discards degenerate triangles, and caps the sample at 20,000 triangles. Queries use bounding checks followed by linear traversal, suitable for the small current sample; a full world needs spatial acceleration.
 
