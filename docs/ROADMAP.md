@@ -13,8 +13,9 @@
 - [x] Detect XEX2 headers and common XDVDFS image layouts.
 - [x] Check volume descriptor and root-directory bounds against the image size.
 - [x] Report unsupported or malformed sources in the launcher.
-- [ ] Parse the XDVDFS directory tree and locate `default.xex` without extracting it.
-- [ ] Read title and build identifiers from the executable metadata.
+- [x] Parse the XDVDFS root directory tree and locate `default.xex` without extracting it.
+- [x] Read title ID, version, base version, and media ID from executable metadata.
+- [ ] Recursively inspect nested directories when the executable is not at the root.
 - [ ] Define and document supported retail builds.
 
 ## Phase 3 — Engine map

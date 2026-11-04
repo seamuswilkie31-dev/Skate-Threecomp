@@ -6,7 +6,7 @@ This repository is an independent project. It does not contain or use code from 
 
 ## Current phase
 
-Phase 2 adds read-only source inspection for Xbox 360 `.iso` and `.xex` files. The launcher remembers the selected source and checks the XEX2 header or the XDVDFS volume descriptor and root-directory bounds. This identifies the file format; it does not verify the game title or build. The launcher still does not load or start the game, so Play remains disabled.
+Phase 2 adds read-only source inspection for Xbox 360 `.iso` and `.xex` files. The launcher checks the XEX2 header or the XDVDFS volume descriptor, walks the root directory tree, locates `default.xex`, and reads its execution metadata (title ID, version, base version, and media ID). It can identify Skate 3 by title ID, but it does not yet confirm a supported retail build or load the executable. Play remains disabled.
 
 The `skate-threecomp-inspect` command-line tool runs the same checks without opening the launcher:
 
@@ -33,7 +33,7 @@ The `wgpu` backend uses Direct3D 12 on supported Windows systems and Vulkan wher
 ## Phases
 
 1. **Launcher foundation** — native shell, source selection, settings, and save path discovery. Complete.
-2. **Source inspection** — read-only ISO/XEX identification and volume-bound checks. Current phase; title/build identification and directory listing remain to be implemented.
+2. **Source inspection** — read-only ISO/XEX identification, root directory traversal, and executable metadata. Current phase; precise retail-build support remains to be documented.
 3. **Engine map** — reverse engineer file/container formats and the major runtime systems from a user-supplied copy; record findings and create format fixtures that contain no copyrighted data.
 4. **Playable slice** — load one small environment, a skater, a camera, and controller input; establish the graphics abstraction and core physics loop.
 5. **Gameplay systems** — expand animation, tricks, collisions, audio, menus, saves, and additional world content in independently testable slices.

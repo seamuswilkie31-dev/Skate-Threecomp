@@ -138,7 +138,7 @@ impl eframe::App for Launcher {
                             ui.label(egui::RichText::new("SOURCE NEEDED").size(11.0).strong().color(egui::Color32::from_rgb(244, 190, 95)));
                         }
                         Some(Ok(info)) => {
-                            ui.label(egui::RichText::new("XBOX SOURCE RECOGNIZED · GAME BUILD NOT VERIFIED").size(11.0).strong().color(egui::Color32::from_rgb(184, 242, 86)));
+                            ui.label(egui::RichText::new(info.status()).size(11.0).strong().color(egui::Color32::from_rgb(184, 242, 86)));
                             ui.label(egui::RichText::new(info.summary()).size(12.0).color(egui::Color32::from_rgb(143, 157, 159)));
                         }
                         Some(Err(error)) => {
