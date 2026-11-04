@@ -81,6 +81,8 @@ cargo run -p skate-threecomp-launcher
 
 The `wgpu` backend uses Direct3D 12 on supported Windows systems and Vulkan where available. Backend selection and platform dependencies can vary by driver and operating system.
 
+For a portable Windows x64 development package, run `pwsh -NoProfile -File scripts/package-windows.ps1` from the repository root after caching the locked dependencies. The ZIP includes the launcher, inspector, quick-start instructions, documentation, and collected dependency notices. See [packaging and attribution limits](docs/PACKAGING.md). Extract the ZIP and run `skate-threecomp.exe`; Rust and Cargo are needed to build the package, not to run the resulting application. The prototype works without game files; importing the game samples requires your selected ISO.
+
 ## Phases
 
 1. **Launcher foundation** — native shell, source selection, settings, and save path discovery. Complete.

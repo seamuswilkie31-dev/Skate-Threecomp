@@ -35,6 +35,14 @@ The SFIL census indexes 4,385 members and 60,495 blocks, with 60,412 segments ma
 
 The directory, archive, stream, and RW4 readers support discovery and the initial in-memory decode path. The [skating prototype](GAMEPLAY.md) connects one imported geometry sample to simplified riding, wall contact, and six verified diffuse-texture bindings, alongside the original course. A separate lightmap preview is available. Complete game-world loading, original lighting, production collision, accurate gameplay reconstruction, and animation remain pending.
 
+## Shared texture research
+
+Read-only research also identified non-SFIL, RefPack-wrapped RW4 members in `data/big/miscboot.big` and `data/big/miscload.big`. A bounded in-memory check decoded 104 RX2 members from those two archives (31,323,540 decoded bytes) and found 318 texture descriptors. Examples in miscboot include `data/content/textures/globaltextures.rx2` (10 descriptors), `vitextures.rx2` (16), `particletextures.rx2`, `cubemap.rx2`, and `downtownlightmap.rx2`. Miscload includes model texture packs under `world/models/`. These families provide candidates for broader asset loading; their multi-asset definition tables are not yet integrated into the runtime sample loader.
+
+The inspected shared-pack definition header is `[count, 20, 20 + 24 × count, 0, total_length]`. Each 24-byte row holds a name offset, observed type hash `0x9B0F1678`, 64-bit asset key, observed type hash `0xAC462E4A`, and descriptor object index. Unlike the sample's single hex-named definition, these packs use descriptive texture names and share resource objects across descriptors. Nonzero fetch base addresses, mixed formats 4/6/18/20, and packed mips need additional resource handling; they must not be decoded under the initial sample's single-resource assumptions.
+
+The three unresolved diffuse keys in the initial presentation sample were absent from those decoded RX2 checks, all 45,217 archive member filenames, and the 23 standalone disc RX2 files. The standalone files are locator metadata arenas with no texture descriptors. A further bounded search of 200 nearby Downtown high-detail presentation/texture members examined 17,821 blocks and 17,247 texture arenas, without finding the three canonical names. The worldmisc/worlddmo stream checks also found none. These are negative findings within the inspected sets, not proof that the assets are absent from the game. Other quality tiers, shared/resident references, and additional world archives remain candidates. No payloads were exported or added to the repository.
+
 ## Directory reader reference and limits
 
 The implementation extends this project's existing XDVDFS reader using the sector size, volume descriptor layout, and directory flag documented by [XboxDev](https://xboxdevwiki.net/XDVDFS). It contains no code from Skate 3 Recompiled.
