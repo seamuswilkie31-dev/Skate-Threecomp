@@ -25,6 +25,16 @@ cargo run -p skate-threecomp-launcher --bin skate-threecomp-inspect -- "D:\Games
 
 The inventory includes file metadata only. Keep generated reports local while investigating your copy. Initial asset research is recorded in [the engine map](docs/ENGINE_MAP.md).
 
+The Rust archive reader can index the `EB` version 3 and `BIG4` layouts observed on the initial disc. List archive counts, inspect one archive's members, or read a 32-byte raw member prefix:
+
+```powershell
+cargo run -p skate-threecomp-launcher --bin skate-threecomp-inspect -- "D:\Games\Skate 3.iso" --archives
+cargo run -p skate-threecomp-launcher --bin skate-threecomp-inspect -- "D:\Games\Skate 3.iso" --archive "data/content/worldDIST_StartPark.big"
+cargo run -p skate-threecomp-launcher --bin skate-threecomp-inspect -- "D:\Games\Skate 3.iso" --prefix "data/content/worldDIST_StartPark.big" "data/content/world/stream/DIST_StartPark/cPres_50_-50_high.xsf"
+```
+
+These modes output JSON and keep all game files in place. Indexing and raw previews do not decode or decompress assets. See [archive reader notes](docs/ARCHIVES.md) for bounds, offset units, and compression limitations.
+
 Save data is stored under the platform's local application data directory:
 
 - Windows: `%LOCALAPPDATA%\Threecomp\Skate Threecomp\saves\skater.p`

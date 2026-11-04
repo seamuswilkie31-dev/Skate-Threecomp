@@ -23,7 +23,9 @@
 ## Phase 3 — Engine map
 
 - [x] Inventory the initial retail disc and record candidate asset families.
-- [ ] Identify archive signatures and implement a bounded archive index reader.
+- [x] Identify observed EB3/BIG4 archive signatures and implement bounded index readers.
+- [x] Read capped raw member prefixes through disc and archive indexes.
+- [ ] Investigate SFIL stream-file headers and compression layouts before asset decoding.
 - Keep an evidence log for file formats and engine behaviors.
 - Design original Rust interfaces around observed behavior.
 - Add synthetic fixtures and unit coverage without copyrighted payloads.

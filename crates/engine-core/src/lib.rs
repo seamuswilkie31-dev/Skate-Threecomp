@@ -2,6 +2,8 @@
 
 mod inventory;
 pub use inventory::{DiscEntry, DiscInventory, inventory_disc};
+mod archive;
+pub use archive::{ArchiveEntry, ArchiveIndex, inspect_disc_archive};
 
 use std::{
     collections::HashSet,
