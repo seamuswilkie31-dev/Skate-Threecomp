@@ -19,7 +19,7 @@ fn main() {
 fn run() -> Result<(), String> {
     let args: Vec<_> = env::args_os().skip(1).collect();
     if args.is_empty() || args.len() > 5 {
-        return Err("Usage: skate-threecomp-inspect <source> [--list|--json|--archives|--streams|--mesh-sample|--archive <disc-path>|--prefix <archive> <member>|--stream <archive> <member>|--decode-block <archive> <member> <block-index>|--rw4-block <archive> <member> <block-index>]".into());
+        return Err("Usage: skate-threecomp-inspect <source> [--list|--json|--archives|--streams|--mesh-sample|--texture-sample|--archive <disc-path>|--prefix <archive> <member>|--stream <archive> <member>|--decode-block <archive> <member> <block-index>|--rw4-block <archive> <member> <block-index>|--texture-block <archive> <member> <block-index>]".into());
     }
     let mode = args.get(1).map(|arg| arg.to_string_lossy().into_owned());
     if mode.as_deref().is_some_and(|mode| {
@@ -34,6 +34,8 @@ fn run() -> Result<(), String> {
             "--decode-block",
             "--rw4-block",
             "--mesh-sample",
+            "--texture-sample",
+            "--texture-block",
         ]
         .contains(&mode)
     }) {
@@ -42,7 +44,7 @@ fn run() -> Result<(), String> {
     let expected_args = match mode.as_deref() {
         Some("--archive") => 3,
         Some("--prefix" | "--stream") => 4,
-        Some("--decode-block" | "--rw4-block") => 5,
+        Some("--decode-block" | "--rw4-block" | "--texture-block") => 5,
         Some(_) => 2,
         None => 1,
     };
@@ -52,13 +54,24 @@ fn run() -> Result<(), String> {
     let path = PathBuf::from(&args[0]);
     let info = inspect_source(&path)?;
     let mut output = io::BufWriter::new(io::stdout().lock());
+    if mode.as_deref() == Some("--texture-sample") {
+        let bytes = threecomp_engine_core::geometry::load_retail_block(&path, 0)?;
+        let report = texture_report(&bytes)?;
+        serde_json::to_writer_pretty(&mut output, &report).map_err(|error| error.to_string())?;
+        return writeln!(output)
+            .and_then(|_| output.flush())
+            .map_err(|error| error.to_string());
+    }
     if mode.as_deref() == Some("--mesh-sample") {
         let sample = threecomp_engine_core::geometry::load_retail_sample(&path)?;
+        let collision = threecomp_engine_core::collision::TriangleMesh::from_sample(&sample)?;
+        let placement = collision.placement().map(|p| [p.x, p.y, p.z]);
         let report = serde_json::json!({"schema_version":1,"mesh_count":sample.meshes.len(),
             "vertex_count":sample.meshes.iter().map(|mesh|mesh.positions.len()).sum::<usize>(),
             "triangle_count":sample.meshes.iter().map(|mesh|mesh.indices.len()/3).sum::<usize>(),
             "bounds_min":[sample.min.x,sample.min.y,sample.min.z],"bounds_max":[sample.max.x,sample.max.y,sample.max.z],
-            "visual_preview_only":true});
+            "prototype_collision":true,"collision_triangle_count":collision.triangle_count(),
+            "rideable_triangle_count":collision.rideable_count,"placement":placement});
         serde_json::to_writer_pretty(&mut output, &report).map_err(|error| error.to_string())?;
         return writeln!(output)
             .and_then(|_| output.flush())
@@ -66,19 +79,33 @@ fn run() -> Result<(), String> {
     }
     if matches!(
         mode.as_deref(),
-        Some("--stream" | "--decode-block" | "--rw4-block")
+        Some("--stream" | "--decode-block" | "--rw4-block" | "--texture-block")
     ) {
         let archive_path = args[2].to_str().ok_or("Archive path must be UTF-8.")?;
         let member_path = args[3].to_str().ok_or("Member path must be UTF-8.")?;
         let (mut file, base, length) = open_stream_member(&path, archive_path, member_path)?;
         let stream = StreamIndex::read(&mut file, base, length)?;
-        let report = if matches!(mode.as_deref(), Some("--decode-block" | "--rw4-block")) {
+        let report = if matches!(
+            mode.as_deref(),
+            Some("--decode-block" | "--rw4-block" | "--texture-block")
+        ) {
             let block: usize = args[4]
                 .to_str()
                 .ok_or("Block index must be a number.")?
                 .parse()
                 .map_err(|_| "Block index must be a nonnegative integer.")?;
             let bytes = stream.decode_block(&mut file, base, block, 64 * 1024 * 1024)?;
+            if mode.as_deref() == Some("--texture-block") {
+                let mut report = texture_report(&bytes)?;
+                report["archive_path"] = serde_json::json!(archive_path);
+                report["member_path"] = serde_json::json!(member_path);
+                report["block_index"] = serde_json::json!(block);
+                serde_json::to_writer_pretty(&mut output, &report)
+                    .map_err(|error| error.to_string())?;
+                return writeln!(output)
+                    .and_then(|_| output.flush())
+                    .map_err(|error| error.to_string());
+            }
             if mode.as_deref() == Some("--rw4-block") {
                 let arena = threecomp_engine_core::rw4::Arena::read(&bytes)?;
                 let mut type_counts = std::collections::BTreeMap::<String, usize>::new();
@@ -308,4 +335,17 @@ fn open_stream_member(
         .checked_add(member.offset)
         .ok_or("Stream offset overflow.")?;
     Ok((file, base, u64::from(member.size_field)))
+}
+
+fn texture_report(bytes: &[u8]) -> Result<serde_json::Value, String> {
+    let textures = threecomp_engine_core::texture::inspect_textures(bytes)?;
+    let records:Vec<_>=textures.iter().map(|t|serde_json::json!({
+        "object_index":t.object_index,"resource_object":t.resource_object,"resource_bytes":t.resource_bytes,
+        "width":t.width,"height":t.height,"pitch_pixels":t.pitch_pixels,"format_id":t.format_id,
+        "endian_mode":t.endian_mode,"tiled":t.tiled,"packed_mips":t.packed_mips,
+        "fetch_words":t.fetch_words,
+    })).collect();
+    Ok(
+        serde_json::json!({"schema_version":1,"metadata_only":true,"texture_count":records.len(),"textures":records}),
+    )
 }

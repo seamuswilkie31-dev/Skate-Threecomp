@@ -32,7 +32,7 @@ The initial archive scan successfully indexed 50 EB3 archives and one BIG4 archi
 
 The SFIL census indexes 4,385 members and 60,495 blocks, with 60,412 segments marked with the observed RefPack flag. A separate decoder check passed 32 sampled blocks across 16 archives. Sample decoded payloads begin with the RW4 signature. The complete block corpus has not been decoded or compared against another implementation.
 
-The directory, archive, stream, and RW4 readers support discovery and the initial in-memory decode path. The original [skating prototype](GAMEPLAY.md) provides basic movement, ollies, ramp contact, and a rendered test course. Game-world loading, production rendering, accurate gameplay reconstruction, and animation remain pending.
+The directory, archive, stream, and RW4 readers support discovery and the initial in-memory decode path. The [skating prototype](GAMEPLAY.md) now connects one imported geometry sample to simplified riding and wall contact, alongside the original course. Observed texture metadata is readable, but pixel decoding remains pending. Complete game-world loading, production collision, accurate gameplay reconstruction, and animation remain pending.
 
 ## Directory reader reference and limits
 

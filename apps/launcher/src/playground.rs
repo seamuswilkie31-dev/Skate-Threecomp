@@ -5,8 +5,14 @@ use std::{
     path::PathBuf,
     sync::mpsc::{self, Receiver, TryRecvError},
 };
+use threecomp_engine_core::collision::{Terrain, TriangleMesh, World};
 use threecomp_engine_core::geometry::{self, Sample};
 use threecomp_engine_core::skating::{FIXED_DT, Input, Skater, Vec3, ground_height};
+
+struct ImportedSample {
+    geometry: Sample,
+    collision: TriangleMesh,
+}
 
 pub struct Playground {
     skater: Skater,
@@ -18,8 +24,8 @@ pub struct Playground {
     target: Vec3,
     target_format: Option<eframe::wgpu::TextureFormat>,
     source: Option<PathBuf>,
-    sample: Option<Sample>,
-    sample_job: Option<Receiver<Result<Sample, String>>>,
+    sample: Option<ImportedSample>,
+    sample_job: Option<Receiver<Result<ImportedSample, String>>>,
     sample_message: Option<String>,
 }
 
@@ -65,7 +71,15 @@ impl Playground {
         self.sample_message = Some("Loading mesh sample…".into());
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let _ = sender.send(geometry::load_retail_sample(&source));
+            let result = (|| {
+                let geometry = geometry::load_retail_sample(&source)?;
+                let collision = TriangleMesh::from_sample(&geometry)?;
+                Ok(ImportedSample {
+                    geometry,
+                    collision,
+                })
+            })();
+            let _ = sender.send(result);
             ctx.request_repaint();
         });
     }
@@ -74,6 +88,9 @@ impl Playground {
         self.accumulator = 0.0;
         self.pending_ollie = false;
         self.pending_flip = false;
+        self.reset_camera();
+    }
+    fn reset_camera(&mut self) {
         self.camera = self.skater.position + v(0.0, 3.5, -7.0);
         self.target = self.skater.position + v(0.0, 0.8, 2.0);
     }
@@ -85,8 +102,9 @@ impl Playground {
                     match result {
                         Ok(sample) => {
                             self.sample_message = Some(format!(
-                                "Imported {} meshes · visual preview only, no collision",
-                                sample.meshes.len()
+                                "Imported {} meshes · {} riding surfaces · walls active",
+                                sample.geometry.meshes.len(),
+                                sample.collision.rideable_count
                             ));
                             self.sample = Some(sample);
                         }
@@ -105,26 +123,40 @@ impl Playground {
         }
         let mut playing = true;
         egui::TopBottomPanel::top("prototype_header").show(ctx, |ui| {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.strong("THREECOMP / SKATING PROTOTYPE");
                 ui.separator();
                 if ui.button("Launcher (Esc)").clicked() {
                     playing = false;
                 }
-                if ui.button("Reset (R)").clicked() {
+                let reset = ui.button("Reset (R)");
+                if reset.clicked() {
+                    reset.surrender_focus();
                     self.reset();
                 }
-                if ui
-                    .add_enabled(
-                        self.source.is_some() && self.sample_job.is_none(),
-                        egui::Button::new("Load game mesh sample"),
-                    )
-                    .clicked()
-                {
+                let load = ui.add_enabled(
+                    self.source.is_some() && self.sample_job.is_none(),
+                    egui::Button::new("Load game mesh sample"),
+                );
+                if load.clicked() {
+                    load.surrender_focus();
                     self.load_sample(ctx);
                 }
                 if self.sample_job.is_some() {
                     ui.spinner();
+                }
+                let placement = self
+                    .sample
+                    .as_ref()
+                    .and_then(|sample| sample.collision.placement());
+                let place = ui.add_enabled(placement.is_some(), egui::Button::new("Place on mesh"));
+                if place.clicked() {
+                    place.surrender_focus();
+                    self.reset();
+                    if let Some(position) = placement {
+                        self.skater.position = position;
+                        self.reset_camera();
+                    }
                 }
             });
             if let Some(message) = &self.sample_message {
@@ -187,13 +219,17 @@ impl Playground {
             self.pending_flip |= flip || controller.input.flip;
             self.accumulator += dt;
             while self.accumulator >= FIXED_DT {
-                self.skater.step(
+                let world = World {
+                    mesh: self.sample.as_ref().map(|s| &s.collision),
+                };
+                self.skater.step_on(
                     Input {
                         ollie: self.pending_ollie,
                         flip: self.pending_flip,
                         ..input
                     },
                     FIXED_DT,
+                    &world,
                 );
                 self.pending_ollie = false;
                 self.pending_flip = false;
@@ -281,7 +317,10 @@ impl Playground {
                 }
                 let p = self.skater.position;
                 let yaw = self.skater.yaw;
-                let surface = ground_height(p.x, p.z);
+                let surface = World {
+                    mesh: self.sample.as_ref().map(|s| &s.collision),
+                }
+                .height(p.x, p.z, p.y + 0.08);
                 scene.quad(
                     [
                         v(p.x - 0.35, surface + 0.02, p.z - 0.65),
@@ -334,16 +373,8 @@ impl Playground {
                     );
                 }
                 if let Some(sample) = &self.sample {
-                    let span = sample.max - sample.min;
-                    let scale = 8.0 / span.x.max(span.y).max(span.z).max(0.001);
-                    let center = (sample.min + sample.max) * 0.5;
-                    let transform = |p: Vec3| {
-                        v(
-                            (p.x - center.x) * scale - 7.0,
-                            (p.y - sample.min.y) * scale + 0.02,
-                            (p.z - center.z) * scale - 2.0,
-                        )
-                    };
+                    let sample = &sample.geometry;
+                    let transform = |p: Vec3| sample.preview_position(p);
                     for mesh in &sample.meshes {
                         for indices in mesh.indices.chunks_exact(3) {
                             let points = [indices[0], indices[1], indices[2]]

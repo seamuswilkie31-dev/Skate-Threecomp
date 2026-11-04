@@ -16,7 +16,7 @@ All linked object types, lengths, reference indexes, finite coordinates, and tri
 
 ## Preview behavior
 
-Select the inspected ISO in the launcher, enter the skating prototype, then click **Load game mesh sample**. Loading runs in a worker while the original course stays usable. The geometry is scaled to fit an eight-metre preview and placed left of the course. It uses a plain material with simple face shading; textures, materials, animation, and collision are absent. Do not use this preview as proof that a complete Skate 3 map has loaded. Geometry remains in memory and no extraction output is written.
+Select the inspected ISO in the launcher, enter the skating prototype, then click **Load game mesh sample**. Loading runs in a worker while the original course stays usable. The geometry is scaled to fit an eight-metre preview and placed left of the course. Rendering and simplified collision share the exact same position transform. It uses a plain material with simple face shading; texture pixels, materials, and animation remain pending. Click **Place on mesh** to use a riding surface. The sample has 413 collision triangles, of which 131 pass the prototype slope threshold. This is a small sample with collision derived from render triangles, not a complete map or original collision database. Geometry remains in memory and no extraction output is written.
 
 The inspector's `--mesh-sample` option invokes the same loader and emits counts and bounds as JSON, without exporting vertices.
 
@@ -35,4 +35,4 @@ $env:THREECOMP_TEST_ISO = "D:\Games\Skate 3.iso"
 cargo test -p skate-threecomp-launcher --bin skate-threecomp graphics::tests -- --ignored --nocapture
 ```
 
-Manual validation of the latest UI and preview composition is still pending. Next work includes broader mesh-layout evidence, texture decoding, scene transforms, and collision geometry for actual game content.
+An explicit real-image simulation test also verifies that the selected placement supports the skater, and an ollie lands back on that surface. See [collision notes](COLLISION.md). Manual validation of the latest UI and preview composition is still pending. Next work includes broader mesh-layout evidence, texture pixel decoding, scene transforms, and more complete collision behavior.

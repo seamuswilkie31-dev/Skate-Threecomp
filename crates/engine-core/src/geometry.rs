@@ -14,6 +14,19 @@ pub struct Sample {
     pub min: Vec3,
     pub max: Vec3,
 }
+impl Sample {
+    /// Shared placement for rendering and prototype collision.
+    pub fn preview_position(&self, p: Vec3) -> Vec3 {
+        let span = self.max - self.min;
+        let scale = 8.0 / span.x.max(span.y).max(span.z).max(0.001);
+        let center = (self.min + self.max) * 0.5;
+        Vec3::new(
+            (p.x - center.x) * scale - 7.0,
+            (p.y - self.min.y) * scale + 0.02,
+            (p.z - center.z) * scale - 2.0,
+        )
+    }
+}
 
 pub fn read_meshes(bytes: &[u8]) -> Result<Sample, String> {
     let arena = Arena::read(bytes)?;
@@ -136,6 +149,11 @@ pub fn read_meshes(bytes: &[u8]) -> Result<Sample, String> {
 /// Read a small, explicitly selected research sample from the user's own image.
 /// The result stays in memory and is not a complete level or collision mesh.
 pub fn load_retail_sample(image: &Path) -> Result<Sample, String> {
+    read_meshes(&load_retail_block(image, 15)?)
+}
+
+/// Decode a block from the explicit research member, capped by the stream reader.
+pub fn load_retail_block(image: &Path, block: usize) -> Result<Vec<u8>, String> {
     let disc = inventory_disc(image)?;
     let archive = disc
         .entries
@@ -166,8 +184,7 @@ pub fn load_retail_sample(image: &Path) -> Result<Sample, String> {
         .checked_add(member.offset)
         .ok_or("Sample offset overflow.")?;
     let stream = StreamIndex::read(&mut file, base, member.size_field as u64)?;
-    let decoded = stream.decode_block(&mut file, base, 15, 64 * 1024 * 1024)?;
-    read_meshes(&decoded)
+    stream.decode_block(&mut file, base, block, 64 * 1024 * 1024)
 }
 fn object<'a>(
     arena: &Arena,

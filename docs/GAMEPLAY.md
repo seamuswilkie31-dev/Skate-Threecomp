@@ -6,7 +6,7 @@ Open **Open skating prototype** in the launcher. For a direct start, run:
 cargo run -p skate-threecomp-launcher -- --prototype
 ```
 
-The prototype runs in the native launcher window with the existing `eframe`/`wgpu` renderer. Its original course, skater placeholder, and movement code require no game assets or ISO. This is an early development environment for the new Rust gameplay systems. Skate 3's world, tricks, animation, physics behavior, and saves have not been reconstructed.
+The prototype runs in the native launcher window with the existing `eframe`/`wgpu` renderer. Its original course, skater placeholder, and movement code require no game assets or ISO. This is an early development environment for the new Rust gameplay systems. The optional imported geometry sample requires the selected ISO. Skate 3's complete world, tricks, animation, physics behavior, and saves have not been reconstructed.
 
 | Input | Action |
 |---|---|
@@ -46,6 +46,6 @@ Movement advances at a fixed 120 Hz. Frame time is bounded to avoid long catch-u
 
 The course and placeholder skater now use a dedicated native wgpu pass with vertex buffers, a camera uniform, perspective projection, and a `Depth32Float` attachment. A compositing pass places the result inside the launcher. The earlier projected/face-sorted view remains available as a fallback when no native wgpu render state is supplied. Board and wheels roll together during flips. Materials, texture decoding, full character animation, and complex collision remain needed. Grinds, ragdoll bails, trick chains, and a full trick vocabulary are pending.
 
-With the initial retail ISO selected in the launcher, **Load game mesh sample** loads a narrow static geometry profile in a background worker. The scaled, untextured sample appears on the left side of the course. The HUD labels it as a visual preview: it has no collision and is not a complete map. Source bytes and decoded geometry stay in memory. Unsupported images/layouts return a status message while the original course remains usable.
+With the initial retail ISO selected in the launcher, **Load game mesh sample** loads a narrow static geometry profile and builds simplified collision in a background worker. The scaled, untextured sample appears on the left side of the course. **Place on mesh** resets the skater and places it on an upper riding surface; **R** returns to the original course. Riding surfaces support the board and steep triangles stop horizontal body movement. The sample is not a complete map or the game's original collision data. See [collision behavior and limits](COLLISION.md). Source bytes and decoded geometry stay in memory. Unsupported images/layouts return a status message while the original course remains usable.
 
 Automated checks cover movement, ollies, ramp following, clean-flip scoring, unfinished-flip bails, switch landings that preserve travel direction, ledge drops without points, controller dead zones, and focus-safe button edges. Explicit native GPU tests verify occlusion/compositing and actual rendering of the retail geometry sample. The native executable is built on Windows. Manual visual interaction with the latest mesh-preview UI remains to be checked; earlier desktop capture attempts timed out. Linux builds with gilrs may need libudev development files, as described in its documentation.

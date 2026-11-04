@@ -45,7 +45,10 @@
 - [ ] Add grinds, richer character animation, and trick chains.
 - [x] Build a dedicated depth-buffered 3D pass and composite it into the native launcher.
 - [x] Connect a bounded real-game mesh sample to an untextured visual preview.
-- [ ] Improve movement/collision and connect game geometry to collision surfaces.
+- [x] Connect the imported sample to shallow-surface support and swept wall probes with shared render transforms.
+- [x] Add a mesh placement action and verify an ollie/landing on the real imported sample.
+- [ ] Improve full-body collision, ceiling contact, sliding, and original game collision-format support.
+- [x] Inspect observed 2D texture descriptors and Xenos fetch metadata.
 - [ ] Decode textures and assemble complete game scenes.
 
 ## Phase 5 — Game systems

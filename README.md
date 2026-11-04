@@ -10,7 +10,7 @@ An early native skating prototype is now available. Click **Open skating prototy
 
 The prototype now accepts controller input and includes board flips, airborne spins, clean-landing scoring, switch stance, and a simple bail/recovery state. On keyboard, use **F** to flip and **Q/E** to spin after an ollie. The HUD shows controller status and the latest trick result.
 
-The prototype now uses a dedicated native 3D pass with depth testing. With the inspected retail ISO selected, click **Load game mesh sample** inside the prototype to load a small original game-geometry sample beside the course. It is an untextured visual preview, scaled for inspection, with no imported collision. The sample stays in memory. See [geometry and renderer notes](docs/GEOMETRY.md).
+The prototype uses a dedicated native 3D pass with depth testing. With the inspected retail ISO selected, click **Load game mesh sample** inside the prototype to load a small original game-geometry sample beside the course. It is untextured and scaled for inspection, with simplified riding-surface and wall collision derived from the same triangles. Click **Place on mesh** to start on an upper surface. The sample stays in memory. See [geometry and renderer notes](docs/GEOMETRY.md) and [collision scope](docs/COLLISION.md).
 
 Phase 2 provides read-only source inspection for Xbox 360 `.iso` and `.xex` files. The launcher checks the XEX2 header or the XDVDFS volume descriptor, walks the root directory tree, locates `default.xex`, and reads its execution metadata (title ID, version, base version, and media ID). It recognizes one Skate 3 retail metadata profile; this is an identifier match, not a cryptographic executable check or proof of runtime compatibility. The game executable is not loaded and Play remains disabled. See [the profile notes](docs/SUPPORTED_BUILDS.md).
 
@@ -59,7 +59,9 @@ cargo run -p skate-threecomp-launcher --bin skate-threecomp-inspect -- "D:\Games
 
 This reports object types and bounded resource offsets. It does not decode object-specific geometry or textures; see [RW4 notes](docs/RW4.md).
 
-`--mesh-sample` runs the same narrow sample loader as the prototype and reports mesh, vertex, triangle, and bounding-box counts as JSON. The initial retail sample contains 9 meshes, 647 vertices, and 413 triangles.
+`--mesh-sample` runs the same narrow sample loader as the prototype and reports geometry counts, bounds, prototype collision counts, and a placement point as JSON. The initial retail sample contains 9 meshes, 647 vertices, 413 collision triangles, and 131 riding-surface triangles.
+
+`--texture-sample` reports the observed texture metadata from block 0 of the same research member. `--texture-block <archive> <member> <block-index>` inspects texture records in an explicit decoded block. These report dimensions, format IDs, tiling flags, byte order, and resource size; they do not decode or display pixels yet. See [texture research](docs/TEXTURES.md).
 
 Save data is stored under the platform's local application data directory:
 

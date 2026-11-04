@@ -128,6 +128,9 @@ impl Skater {
     /// Called at a fixed 120 Hz by the playground. Invalid or large caller steps
     /// are ignored so a paused window cannot destabilize collision integration.
     pub fn step(&mut self, input: Input, dt: f32) {
+        self.step_on(input, dt, &crate::collision::World { mesh: None });
+    }
+    pub fn step_on(&mut self, input: Input, dt: f32, terrain: &impl crate::collision::Terrain) {
         if !dt.is_finite() || !(0.0..=1.0 / 30.0).contains(&dt) {
             return;
         }
@@ -169,7 +172,8 @@ impl Skater {
                 self.start_air(true);
             }
         }
-        let previous_surface = ground_height(self.position.x, self.position.z);
+        let support_ceiling = self.position.y + 0.08;
+        let previous_surface = terrain.height(self.position.x, self.position.z, support_ceiling);
         let heading = if self.grounded {
             self.yaw
                 + if self.switch_stance {
@@ -182,13 +186,16 @@ impl Skater {
         };
         let movement = Vec3::new(heading.sin(), 0.0, heading.cos()) * (self.speed * dt);
         let next = self.position + movement;
-        if next.x.abs() > COURSE_X - 0.5 || next.z.abs() > COURSE_Z - 0.5 {
+        if next.x.abs() > COURSE_X - 0.5
+            || next.z.abs() > COURSE_Z - 0.5
+            || terrain.blocks_motion(self.position, next)
+        {
             self.speed = 0.0;
         } else {
             self.position.x = next.x;
             self.position.z = next.z;
         }
-        let floor = ground_height(self.position.x, self.position.z) + 0.12;
+        let floor = terrain.height(self.position.x, self.position.z, support_ceiling) + 0.12;
         if self.grounded {
             let change = floor - 0.12 - previous_surface;
             if change.abs() <= 0.2 {
