@@ -1,11 +1,14 @@
 use std::{
     fs,
+    io::{BufWriter, Write},
     path::{Path, PathBuf},
+    sync::mpsc::{self, Receiver, TryRecvError},
 };
 
 use eframe::egui;
 use serde::{Deserialize, Serialize};
-use threecomp_engine_core::{SourceInfo, inspect_source};
+use skate_threecomp_launcher::write_inventory_json;
+use threecomp_engine_core::{SourceInfo, inspect_source, inventory_disc};
 
 const APP_NAME: &str = "Skate Threecomp";
 
@@ -20,6 +23,7 @@ struct Launcher {
     save_file_path: PathBuf,
     source_inspection: Option<Result<SourceInfo, String>>,
     message: Option<String>,
+    inventory_job: Option<Receiver<Result<String, String>>>,
 }
 
 impl Launcher {
@@ -47,6 +51,7 @@ impl Launcher {
             save_file_path,
             source_inspection,
             message: None,
+            inventory_job: None,
         }
     }
 
@@ -97,10 +102,82 @@ impl Launcher {
             self.message = Some(format!("Could not open save folder: {error}"));
         }
     }
+
+    fn export_inventory(&mut self, ctx: &egui::Context) {
+        let Some(source) = self.settings.source_path.clone() else {
+            return;
+        };
+        let Some(destination) = rfd::FileDialog::new()
+            .add_filter("JSON inventory", &["json"])
+            .set_file_name("skate-threecomp-inventory.json")
+            .save_file()
+        else {
+            return;
+        };
+        // Never overwrite the selected game image with its own report.
+        if destination == source
+            || (destination
+                .canonicalize()
+                .ok()
+                .is_some_and(|path| Some(path) == source.canonicalize().ok()))
+        {
+            self.message =
+                Some("Choose a report destination different from the game source.".into());
+            return;
+        }
+        let (sender, receiver) = mpsc::channel();
+        self.inventory_job = Some(receiver);
+        self.message = Some("Scanning disc directories…".into());
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let result = (|| {
+                let info = inspect_source(&source)?;
+                let inventory = inventory_disc(&source)?;
+                // Serialize before creating the destination so failed scans leave it alone.
+                let mut bytes = Vec::new();
+                write_inventory_json(&mut bytes, &info, &inventory)?;
+                let file = fs::File::create(&destination)
+                    .map_err(|error| format!("Could not create report: {error}"))?;
+                let mut output = BufWriter::new(file);
+                output
+                    .write_all(&bytes)
+                    .and_then(|_| output.flush())
+                    .map_err(|error| format!("Could not save report: {error}"))?;
+                Ok(format!(
+                    "Exported {} files in {} directories to {}",
+                    inventory.file_count(),
+                    inventory.directory_count(),
+                    destination.display()
+                ))
+            })();
+            let _ = sender.send(result);
+            ctx.request_repaint();
+        });
+    }
+
+    fn poll_inventory(&mut self) {
+        let Some(receiver) = &self.inventory_job else {
+            return;
+        };
+        match receiver.try_recv() {
+            Ok(result) => {
+                self.message =
+                    Some(result.unwrap_or_else(|error| format!("Inventory failed: {error}")));
+                self.inventory_job = None;
+            }
+            Err(TryRecvError::Disconnected) => {
+                self.message =
+                    Some("Inventory worker stopped before completing the report.".into());
+                self.inventory_job = None;
+            }
+            Err(TryRecvError::Empty) => {}
+        }
+    }
 }
 
 impl eframe::App for Launcher {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.poll_inventory();
         ctx.set_visuals(egui::Visuals::dark());
         egui::CentralPanel::default()
             .frame(egui::Frame::default().fill(egui::Color32::from_rgb(14, 18, 20)).inner_margin(egui::Margin::same(30)))
@@ -146,6 +223,15 @@ impl eframe::App for Launcher {
                             ui.label(egui::RichText::new(error).size(12.0).color(egui::Color32::from_rgb(168, 182, 183)));
                         }
                     }
+                    ui.add_space(10.0);
+                    let can_inventory = self.inventory_job.is_none()
+                        && matches!(&self.source_inspection, Some(Ok(SourceInfo::XboxDiscImage { .. })));
+                    ui.horizontal(|ui| {
+                        if ui.add_enabled(can_inventory, egui::Button::new("Export file inventory")).clicked() {
+                            self.export_inventory(ctx);
+                        }
+                        if self.inventory_job.is_some() { ui.spinner(); }
+                    });
                 });
 
                 ui.add_space(14.0);

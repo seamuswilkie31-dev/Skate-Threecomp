@@ -16,11 +16,14 @@
 - [x] Parse the XDVDFS root directory tree and locate `default.xex` without extracting it.
 - [x] Read title ID, version, base version, and media ID from executable metadata.
 - [ ] Recursively inspect nested directories when the executable is not at the root.
+- [x] Recursively inventory disc directories with bounded traversal and text/JSON reports.
 - [x] Record an initial retail metadata profile (identification only; runtime compatibility unverified).
 - [ ] Cryptographically identify the executable and verify additional retail or regional builds.
 
 ## Phase 3 — Engine map
 
+- [x] Inventory the initial retail disc and record candidate asset families.
+- [ ] Identify archive signatures and implement a bounded archive index reader.
 - Keep an evidence log for file formats and engine behaviors.
 - Design original Rust interfaces around observed behavior.
 - Add synthetic fixtures and unit coverage without copyrighted payloads.

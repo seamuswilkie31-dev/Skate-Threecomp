@@ -14,6 +14,17 @@ The `skate-threecomp-inspect` command-line tool runs the same checks without ope
 cargo run -p skate-threecomp-launcher --bin skate-threecomp-inspect -- "D:\Games\Skate 3.iso"
 ```
 
+Use **Export file inventory** in the launcher to save a JSON list of disc paths, sizes, directory flags, and absolute image offsets. The scan runs in the background. It reads directory metadata and does not extract assets. A standalone `.xex` has no disc filesystem to inventory.
+
+The command-line tool also supports a recursive text listing or JSON output:
+
+```powershell
+cargo run -p skate-threecomp-launcher --bin skate-threecomp-inspect -- "D:\Games\Skate 3.iso" --list
+cargo run -p skate-threecomp-launcher --bin skate-threecomp-inspect -- "D:\Games\Skate 3.iso" --json > inventory.json
+```
+
+The inventory includes file metadata only. Keep generated reports local while investigating your copy. Initial asset research is recorded in [the engine map](docs/ENGINE_MAP.md).
+
 Save data is stored under the platform's local application data directory:
 
 - Windows: `%LOCALAPPDATA%\Threecomp\Skate Threecomp\saves\skater.p`

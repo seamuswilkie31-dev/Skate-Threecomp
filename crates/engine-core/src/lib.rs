@@ -1,5 +1,8 @@
 //! Clean-room foundations for reading user-supplied Xbox 360 game media.
 
+mod inventory;
+pub use inventory::{DiscEntry, DiscInventory, inventory_disc};
+
 use std::{
     collections::HashSet,
     fs::File,
@@ -160,6 +163,7 @@ impl SourceInfo {
 
 #[derive(Debug)]
 struct DirectoryEntry {
+    name: String,
     start_sector: u32,
     size: u32,
     is_directory: bool,
@@ -343,12 +347,22 @@ fn inspect_iso(file: &mut File, file_size: u64) -> Result<SourceInfo, String> {
 }
 
 fn find_directory_entry(table: &[u8], target: &str) -> Result<Option<DirectoryEntry>, String> {
+    Ok(read_directory_entries(table)?
+        .into_iter()
+        .find(|entry| entry.name.eq_ignore_ascii_case(target)))
+}
+
+fn read_directory_entries(table: &[u8]) -> Result<Vec<DirectoryEntry>, String> {
+    if table.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut entries = Vec::new();
     let mut pending = vec![0usize];
     let mut visited = HashSet::new();
 
     while let Some(offset) = pending.pop() {
         if !visited.insert(offset) {
-            continue;
+            return Err("Disc directory tree contains a cycle or shared node.".into());
         }
         let header_end = offset
             .checked_add(14)
@@ -370,13 +384,23 @@ fn find_directory_entry(table: &[u8], target: &str) -> Result<Option<DirectoryEn
             return Err("Disc directory filename extends past its table.".into());
         }
         let name = String::from_utf8_lossy(&table[header_end..name_end]).into_owned();
-        if name.eq_ignore_ascii_case(target) {
-            return Ok(Some(DirectoryEntry {
-                start_sector,
-                size,
-                is_directory: attributes & 0x10 != 0,
-            }));
+        if entries.len() >= 100_000 {
+            return Err("Disc directory contains too many entries to inspect.".into());
         }
+        if name.is_empty()
+            || name == "."
+            || name == ".."
+            || name.contains(['/', '\\', '\0'])
+            || name.chars().any(char::is_control)
+        {
+            return Err("Disc directory contains an invalid filename.".into());
+        }
+        entries.push(DirectoryEntry {
+            name,
+            start_sector,
+            size,
+            is_directory: attributes & 0x10 != 0,
+        });
 
         for pointer in [left, right] {
             if pointer == 0 || pointer == u16::MAX {
@@ -390,7 +414,7 @@ fn find_directory_entry(table: &[u8], target: &str) -> Result<Option<DirectoryEn
         }
     }
 
-    Ok(None)
+    Ok(entries)
 }
 
 fn read_be_u32(bytes: &[u8]) -> u32 {
