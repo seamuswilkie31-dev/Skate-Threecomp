@@ -5,8 +5,10 @@ use std::{fs::File, path::Path};
 
 #[derive(Debug, Clone)]
 pub struct Mesh {
+    pub draw_index: usize,
     pub positions: Vec<Vec3>,
     pub indices: Vec<u32>,
+    pub uv: Vec<[f32; 2]>,
 }
 #[derive(Debug, Clone)]
 pub struct Sample {
@@ -50,6 +52,8 @@ pub fn read_meshes(bytes: &[u8]) -> Result<Sample, String> {
             || word(layout, 16) != 0
             || word(layout, 20) != 0x002a23b9
             || layout[80..84] != [28; 4]
+            || word(layout, 32) != 12
+            || word(layout, 36) != 0x002c235f
         {
             return Err(
                 "Unsupported vertex declaration (expected observed float3/28-byte profile).".into(),
@@ -115,6 +119,7 @@ pub fn read_meshes(bytes: &[u8]) -> Result<Sample, String> {
             return Err("Geometry exceeds the preview budget.".into());
         }
         let mut positions = Vec::with_capacity(length / 28);
+        let mut uv = Vec::with_capacity(length / 28);
         for record in vertex_bytes[..length].chunks_exact(28) {
             let p = Vec3::new(
                 f32::from_bits(word(record, 0)),
@@ -130,6 +135,14 @@ pub fn read_meshes(bytes: &[u8]) -> Result<Sample, String> {
             min = Vec3::new(min.x.min(p.x), min.y.min(p.y), min.z.min(p.z));
             max = Vec3::new(max.x.max(p.x), max.y.max(p.y), max.z.max(p.z));
             positions.push(p);
+            let coords = [
+                half(u16::from_be_bytes(record[12..14].try_into().unwrap())),
+                half(u16::from_be_bytes(record[14..16].try_into().unwrap())),
+            ];
+            if !coords.iter().all(|v| v.is_finite()) {
+                return Err("Non-finite mesh UV coordinate.".into());
+            }
+            uv.push(coords);
         }
         let indices: Vec<u32> = index_bytes[..index_count * 2]
             .chunks_exact(2)
@@ -138,7 +151,12 @@ pub fn read_meshes(bytes: &[u8]) -> Result<Sample, String> {
         if indices.iter().any(|&i| i as usize >= positions.len()) {
             return Err("Triangle index exceeds its vertex buffer.".into());
         }
-        meshes.push(Mesh { positions, indices });
+        meshes.push(Mesh {
+            draw_index,
+            positions,
+            indices,
+            uv,
+        });
     }
     if meshes.is_empty() {
         return Err("No supported static draw records found in this arena.".into());
@@ -212,10 +230,34 @@ fn object<'a>(
 fn word(bytes: &[u8], offset: usize) -> u32 {
     u32::from_be_bytes(bytes[offset..offset + 4].try_into().unwrap())
 }
+fn half(bits: u16) -> f32 {
+    let sign = if bits & 0x8000 == 0 { 1.0 } else { -1.0 };
+    let exponent = (bits >> 10) & 31;
+    let fraction = bits & 1023;
+    match exponent {
+        0 => sign * (fraction as f32) * 2.0f32.powi(-24),
+        31 => {
+            if fraction == 0 {
+                sign * f32::INFINITY
+            } else {
+                f32::NAN
+            }
+        }
+        _ => sign * (1.0 + fraction as f32 / 1024.0) * 2.0f32.powi(exponent as i32 - 15),
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn half_coordinates_cover_sign_subnormals_and_nonfinite_values() {
+        assert_eq!(half(0x3c00), 1.0);
+        assert_eq!(half(0xc000), -2.0);
+        assert_eq!(half(1), 2.0f32.powi(-24));
+        assert_eq!(half(0x3555), 0.33325195);
+        assert!(half(0x7c00).is_infinite() && half(0x7fff).is_nan());
+    }
     fn put(bytes: &mut [u8], offset: usize, value: u32) {
         bytes[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
     }
@@ -258,6 +300,8 @@ mod tests {
             (172 + 96, 4),
             (172 + 108, 3),
             (288 + 20, 0x002a23b9),
+            (288 + 32, 12),
+            (288 + 36, 0x002c235f),
             (372, 1),
             (376, 1),
             (380, 4),
@@ -304,6 +348,7 @@ mod tests {
             (428 + 32, 4),
             (172 + 96, 5),
             (472, 56),
+            (640 + 12, 0x7c000000),
         ] {
             let mut bytes = fixture();
             put(&mut bytes, offset, value);

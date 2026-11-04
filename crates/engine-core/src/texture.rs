@@ -1,5 +1,4 @@
-//! Metadata only: observed RW4 texture records and Xenos fetch words.
-//! No tiling, mip-tail, pixel, or material-binding decoder is claimed here.
+//! Observed texture metadata and a narrow tiled BC1 base-level decoder.
 use crate::rw4::Arena;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,6 +14,151 @@ pub struct TextureInfo {
     pub tiled: bool,
     pub packed_mips: bool,
     pub fetch_words: [u32; 6],
+}
+
+#[derive(Debug, Clone)]
+pub struct DecodedTexture {
+    pub width: u32,
+    pub height: u32,
+    pub rgba8: Vec<u8>,
+}
+pub struct TextureAsset {
+    pub key: u64,
+    pub pixels: DecodedTexture,
+}
+pub fn decode_rgb565_mip0(bytes: &[u8], object_index: usize) -> Result<DecodedTexture, String> {
+    let textures = inspect_textures(bytes)?;
+    let t = textures
+        .iter()
+        .find(|t| t.object_index == object_index)
+        .ok_or("Texture descriptor not found.")?;
+    if t.format_id != 4
+        || t.endian_mode != 1
+        || !t.tiled
+        || t.fetch_words[0] & 0x3fc != 0
+        || t.fetch_words[1] >> 12 != 0
+        || t.fetch_words[3] & 0x7ffff != 0x1414
+        || (t.fetch_words[4] >> 2) & 15 != 0
+    {
+        return Err("Unsupported RGB565 base-level fetch profile.".into());
+    }
+    let arena = Arena::read(bytes)?;
+    let rgba8 = crate::rgb565::decode(
+        arena.object_data(bytes, t.resource_object)?,
+        t.width,
+        t.height,
+        t.pitch_pixels,
+    )?;
+    Ok(DecodedTexture {
+        width: t.width,
+        height: t.height,
+        rgba8,
+    })
+}
+/// Canonical key is explicitly named in the texture definition; a single
+/// observed storage flag may differ in the numeric key. Other bits are retained.
+fn texture_key(bytes: &[u8]) -> Result<u64, String> {
+    let arena = Arena::read(bytes)?;
+    let tables: Vec<_> = arena
+        .objects
+        .iter()
+        .enumerate()
+        .filter(|(_, o)| o.type_id == 0xeb000b)
+        .collect();
+    if tables.len() != 1 {
+        return Err("Expected one texture definition table.".into());
+    }
+    let d = arena.object_data(bytes, tables[0].0)?;
+    named_texture_key(d)
+}
+fn named_texture_key(d: &[u8]) -> Result<u64, String> {
+    if d.len() < 44
+        || word(d, 0) != 1
+        || word(d, 4) != 20
+        || word(d, 8) != 44
+        || word(d, 20) != 44
+        || word(d, 16) as usize != d.len()
+    {
+        return Err("Unsupported texture key table.".into());
+    }
+    let end = d[44..]
+        .iter()
+        .position(|&b| b == 0)
+        .ok_or("Unterminated texture key name.")?;
+    let name = std::str::from_utf8(&d[44..44 + end]).map_err(|_| "Invalid texture key name.")?;
+    if name.len() != 26 || !name.starts_with("0x") || !name.ends_with(".Texture") {
+        return Err("Unsupported canonical texture key name.".into());
+    }
+    let key =
+        u64::from_str_radix(&name[2..18], 16).map_err(|_| "Invalid hexadecimal texture key.")?;
+    let raw = (u64::from(word(d, 28)) << 32) | u64::from(word(d, 32));
+    if raw != key && raw != (key | 0x4000000000000000) {
+        return Err("Numeric and named texture keys disagree.".into());
+    }
+    Ok(key)
+}
+pub fn load_retail_diffuse_textures(image: &std::path::Path) -> Result<Vec<TextureAsset>, String> {
+    let mut assets = Vec::new();
+    for (block, expected) in [
+        (4, 0x00008cfe03e3870au64),
+        (5, 0x00008d0703e3870a),
+        (6, 0x00008d1f03e3870a),
+        (7, 0x2c70170a00050227),
+    ] {
+        let bytes = crate::geometry::load_retail_block(image, block)?;
+        let key = texture_key(&bytes)?;
+        if key != expected {
+            return Err("Retail diffuse sample key differs from the researched profile.".into());
+        }
+        let object_index = inspect_textures(&bytes)?
+            .first()
+            .ok_or("Missing diffuse descriptor.")?
+            .object_index;
+        assets.push(TextureAsset {
+            key,
+            pixels: decode_rgb565_mip0(&bytes, object_index)?,
+        });
+    }
+    Ok(assets)
+}
+
+/// Decode only the observed base-level profile. Packed mip tails, nonzero GPU
+/// base offsets, other formats/sign/swizzle modes, and other endian modes error.
+pub fn decode_bc1_mip0(bytes: &[u8], object_index: usize) -> Result<DecodedTexture, String> {
+    let textures = inspect_textures(bytes)?;
+    let info = textures
+        .iter()
+        .find(|t| t.object_index == object_index)
+        .ok_or("Texture descriptor not found.")?;
+    if info.format_id != 18
+        || info.endian_mode != 1
+        || !info.tiled
+        || info.packed_mips
+        || info.fetch_words[0] & 0x3fc != 0
+        || info.fetch_words[1] >> 12 != 0
+        || info.fetch_words[5] >> 12 != 0
+        || info.fetch_words[3] & 0x7ffff != 0xd10
+        || (info.fetch_words[4] >> 2) & 15 != 0
+    {
+        return Err("Unsupported BC1 preview profile (requires tiled mip zero, identity swizzle, unsigned channels, endian mode 1, no packed mips or base offsets).".into());
+    }
+    let arena = Arena::read(bytes)?;
+    let resource = arena.object_data(bytes, info.resource_object)?;
+    let rgba8 = crate::bc1::decode(resource, info.width, info.height, info.pitch_pixels)?;
+    Ok(DecodedTexture {
+        width: info.width,
+        height: info.height,
+        rgba8,
+    })
+}
+
+pub fn load_retail_texture(image: &std::path::Path) -> Result<DecodedTexture, String> {
+    let bytes = crate::geometry::load_retail_block(image, 0)?;
+    let object_index = inspect_textures(&bytes)?
+        .first()
+        .ok_or("Sample block contains no texture.")?
+        .object_index;
+    decode_bc1_mip0(&bytes, object_index)
 }
 pub fn inspect_textures(bytes: &[u8]) -> Result<Vec<TextureInfo>, String> {
     let arena = Arena::read(bytes)?;
@@ -75,6 +219,31 @@ fn word(bytes: &[u8], offset: usize) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn canonical_names_preserve_key_bits_and_validate_storage_flag() {
+        for (name_key, stored) in [
+            (0x00008cfe03e3870au64, 0x40008cfe03e3870au64),
+            (0x8cfffed701ee37f8, 0x8cfffed701ee37f8),
+        ] {
+            let mut blob = vec![0; 72];
+            for (offset, value) in [
+                (0, 1),
+                (4, 20),
+                (8, 44),
+                (16, 72),
+                (20, 44),
+                (28, (stored >> 32) as u32),
+                (32, stored as u32),
+            ] {
+                put(&mut blob, offset, value);
+            }
+            let name = format!("0x{name_key:016x}.Texture");
+            blob[44..70].copy_from_slice(name.as_bytes());
+            assert_eq!(named_texture_key(&blob).unwrap(), name_key);
+            blob[32] ^= 1;
+            assert!(named_texture_key(&blob).is_err());
+        }
+    }
     fn put(bytes: &mut [u8], offset: usize, value: u32) {
         bytes[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
     }
@@ -126,5 +295,47 @@ mod tests {
             put(&mut bytes, offset, value);
             assert!(inspect_textures(&bytes).is_err());
         }
+    }
+    #[test]
+    fn pixel_decoder_rejects_unsupported_modes_before_using_resource() {
+        let mut bytes = fixture();
+        put(&mut bytes, 172 + 48, 0x200);
+        for (offset, value) in [
+            (172 + 48, 0x8a00),
+            (172 + 32, 0x54),
+            (172 + 28, 0x02000002),
+            (172 + 32, 0x92),
+            (172 + 40, 0),
+        ] {
+            let mut candidate = bytes.clone();
+            put(&mut candidate, offset, value);
+            assert!(
+                decode_bc1_mip0(&candidate, 0)
+                    .unwrap_err()
+                    .contains("Unsupported BC1 preview profile")
+            );
+        }
+        // Even the supported shape cannot decode a deliberately tiny resource.
+        put(&mut bytes, 172 + 48, 0x200);
+        assert!(decode_bc1_mip0(&bytes, 0).is_err());
+    }
+    #[test]
+    #[ignore = "Requires THREECOMP_TEST_ISO pointing to the local retail disc image"]
+    fn retail_bc1_base_level_decodes_with_varied_opaque_pixels() {
+        let path = std::env::var_os("THREECOMP_TEST_ISO").expect("Set THREECOMP_TEST_ISO");
+        let texture = load_retail_texture(std::path::Path::new(&path)).unwrap();
+        assert_eq!((texture.width, texture.height), (512, 512));
+        assert_eq!(texture.rgba8.len(), 512 * 512 * 4);
+        let colors: std::collections::HashSet<_> = texture
+            .rgba8
+            .chunks_exact(4)
+            .map(|p| [p[0], p[1], p[2], p[3]])
+            .collect();
+        assert!(colors.len() > 256);
+        assert!(texture.rgba8.chunks_exact(4).all(|p| p[3] == 255));
+        eprintln!(
+            "Decoded retail lightmap: {} distinct RGBA colors",
+            colors.len()
+        );
     }
 }

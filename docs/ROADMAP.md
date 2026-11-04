@@ -28,6 +28,8 @@
 - [x] Index the observed SFIL v3 block and segment layout with exact member bounds.
 - [x] Decode raw and five-byte-header RefPack segments in memory with explicit size budgets.
 - [x] Decode one observed static float3/28-byte vertex and uint16 triangle-list profile.
+- [x] Decode the first half-float diffuse UV set and validate draw-to-material associations.
+- [x] Decode narrow tiled BC1 and RGB565 base levels with verified byte order and channel profiles.
 - [ ] Investigate other geometry layouts, textures, transforms, and full scene assembly.
 - [x] Read observed Xbox 360 RW4 dictionaries and resolve bounded resource regions.
 - [ ] Verify remaining SFIL variants and codec flags as evidence becomes available.
@@ -44,12 +46,14 @@
 - [x] Animate board flips and detect clean flip/spin landings, switch stance, scores, and simple bails.
 - [ ] Add grinds, richer character animation, and trick chains.
 - [x] Build a dedicated depth-buffered 3D pass and composite it into the native launcher.
-- [x] Connect a bounded real-game mesh sample to an untextured visual preview.
+- [x] Connect a bounded real-game mesh sample to a native visual preview.
 - [x] Connect the imported sample to shallow-surface support and swept wall probes with shared render transforms.
 - [x] Add a mesh placement action and verify an ollie/landing on the real imported sample.
 - [ ] Improve full-body collision, ceiling contact, sliding, and original game collision-format support.
 - [x] Inspect observed 2D texture descriptors and Xenos fetch metadata.
-- [ ] Decode textures and assemble complete game scenes.
+- [x] Bind four local diffuse textures to six sample meshes and preview a decoded lightmap.
+- [ ] Resolve the remaining material keys, packed base tails, other formats, and mip levels.
+- [ ] Verify lightmap coordinates, original lighting, scene transforms, and complete scene assembly.
 
 ## Phase 5 — Game systems
 

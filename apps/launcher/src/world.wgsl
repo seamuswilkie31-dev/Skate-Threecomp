@@ -1,7 +1,9 @@
 struct Camera { eye: vec4<f32>, right: vec4<f32>, up: vec4<f32>, forward: vec4<f32>, projection: vec4<f32> }
 @group(0) @binding(0) var<uniform> camera: Camera;
-struct Out { @builtin(position) position: vec4<f32>, @location(0) color: vec3<f32> }
-@vertex fn vertex(@location(0) position: vec3<f32>, @location(1) color: vec3<f32>) -> Out {
+@group(0) @binding(1) var diffuse: texture_2d_array<f32>;
+@group(0) @binding(2) var diffuse_sampler: sampler;
+struct Out { @builtin(position) position: vec4<f32>, @location(0) color: vec3<f32>, @location(1) uv: vec2<f32>, @location(2) @interpolate(flat) layer:u32 }
+@vertex fn vertex(@location(0) position: vec3<f32>, @location(1) color: vec3<f32>, @location(2) uv:vec2<f32>, @location(3) layer:u32) -> Out {
     let delta = position - camera.eye.xyz;
     let depth = dot(delta, camera.forward.xyz);
     let near = camera.projection.z;
@@ -11,6 +13,7 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) color: vec3<f3
         dot(delta, camera.up.xyz)*camera.projection.y,
         depth*far/(far-near)-far*near/(far-near), depth);
     out.color = color;
+    out.uv=uv;out.layer=layer;
     return out;
 }
-@fragment fn fragment(in: Out) -> @location(0) vec4<f32> { return vec4<f32>(in.color, 1.0); }
+@fragment fn fragment(in: Out) -> @location(0) vec4<f32> { return vec4<f32>(in.color,1.0)*textureSample(diffuse,diffuse_sampler,in.uv,i32(in.layer)); }

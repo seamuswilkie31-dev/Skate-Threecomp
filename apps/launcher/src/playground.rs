@@ -3,15 +3,20 @@
 use eframe::egui::{self, Color32, Pos2, Rect, Vec2};
 use std::{
     path::PathBuf,
+    sync::Arc,
     sync::mpsc::{self, Receiver, TryRecvError},
 };
 use threecomp_engine_core::collision::{Terrain, TriangleMesh, World};
 use threecomp_engine_core::geometry::{self, Sample};
 use threecomp_engine_core::skating::{FIXED_DT, Input, Skater, Vec3, ground_height};
+use threecomp_engine_core::texture::{self, DecodedTexture};
 
 struct ImportedSample {
     geometry: Sample,
     collision: TriangleMesh,
+    textures: Option<Arc<crate::graphics::TextureSet>>,
+    mesh_layers: Vec<u32>,
+    material_note: String,
 }
 
 pub struct Playground {
@@ -27,6 +32,10 @@ pub struct Playground {
     sample: Option<ImportedSample>,
     sample_job: Option<Receiver<Result<ImportedSample, String>>>,
     sample_message: Option<String>,
+    texture_job: Option<Receiver<Result<DecodedTexture, String>>>,
+    texture_preview: Option<egui::TextureHandle>,
+    texture_message: Option<String>,
+    texture_open: bool,
 }
 
 impl Default for Playground {
@@ -47,6 +56,10 @@ impl Default for Playground {
             sample: None,
             sample_job: None,
             sample_message: None,
+            texture_job: None,
+            texture_preview: None,
+            texture_message: None,
+            texture_open: false,
         }
     }
 }
@@ -72,11 +85,50 @@ impl Playground {
         let ctx = ctx.clone();
         std::thread::spawn(move || {
             let result = (|| {
-                let geometry = geometry::load_retail_sample(&source)?;
+                let decoded = geometry::load_retail_block(&source, 15)?;
+                let geometry = geometry::read_meshes(&decoded)?;
                 let collision = TriangleMesh::from_sample(&geometry)?;
+                let material_data = (|| -> Result<_, String> {
+                    let bindings = threecomp_engine_core::materials::inspect_materials(&decoded)?;
+                    let assets = texture::load_retail_diffuse_textures(&source)?;
+                    let layers: Vec<u32> = geometry
+                        .meshes
+                        .iter()
+                        .map(|mesh| {
+                            bindings
+                                .iter()
+                                .find(|b| b.draw_index == mesh.draw_index)
+                                .and_then(|b| b.diffuse_key)
+                                .and_then(|key| assets.iter().position(|asset| asset.key == key))
+                                .map_or(0, |index| index as u32 + 1)
+                        })
+                        .collect();
+                    Ok((
+                        Arc::new(crate::graphics::TextureSet::from_assets(&assets)),
+                        layers,
+                    ))
+                })();
+                let (textures, mesh_layers, material_note) = match material_data {
+                    Ok((set, layers)) => {
+                        let count = layers.iter().filter(|&&layer| layer != 0).count();
+                        (
+                            Some(set),
+                            layers,
+                            format!("{count} meshes with linked diffuse maps"),
+                        )
+                    }
+                    Err(error) => (
+                        None,
+                        vec![0; geometry.meshes.len()],
+                        format!("Plain material fallback: {error}"),
+                    ),
+                };
                 Ok(ImportedSample {
                     geometry,
                     collision,
+                    textures,
+                    mesh_layers,
+                    material_note,
                 })
             })();
             let _ = sender.send(result);
@@ -90,21 +142,69 @@ impl Playground {
         self.pending_flip = false;
         self.reset_camera();
     }
+    fn load_texture(&mut self, ctx: &egui::Context) {
+        let Some(source) = self.source.clone() else {
+            return;
+        };
+        let (sender, receiver) = mpsc::channel();
+        self.texture_job = Some(receiver);
+        self.texture_message = Some("Decoding texture sample…".into());
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = sender.send(texture::load_retail_texture(&source));
+            ctx.request_repaint();
+        });
+    }
     fn reset_camera(&mut self) {
         self.camera = self.skater.position + v(0.0, 3.5, -7.0);
         self.target = self.skater.position + v(0.0, 0.8, 2.0);
     }
     /// Return false when the player asks to return to the launcher.
     pub fn update(&mut self, ctx: &egui::Context) -> bool {
+        if let Some(receiver) = &self.texture_job {
+            match receiver.try_recv() {
+                Ok(result) => {
+                    match result {
+                        Ok(texture) => {
+                            let image = egui::ColorImage::from_rgba_unmultiplied(
+                                [texture.width as usize, texture.height as usize],
+                                &texture.rgba8,
+                            );
+                            self.texture_preview = Some(ctx.load_texture(
+                                "retail_lightmap_sample",
+                                image,
+                                egui::TextureOptions::NEAREST,
+                            ));
+                            self.texture_message = Some(format!(
+                                "Decoded {} × {} lightmap sample",
+                                texture.width, texture.height
+                            ));
+                            self.texture_open = true;
+                        }
+                        Err(error) => {
+                            self.texture_message =
+                                Some(format!("Texture sample unavailable: {error}"))
+                        }
+                    }
+                    self.texture_job = None;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    self.texture_job = None;
+                    self.texture_message = Some("Texture loader stopped before completion.".into());
+                }
+                Err(TryRecvError::Empty) => {}
+            }
+        }
         if let Some(receiver) = &self.sample_job {
             match receiver.try_recv() {
                 Ok(result) => {
                     match result {
                         Ok(sample) => {
                             self.sample_message = Some(format!(
-                                "Imported {} meshes · {} riding surfaces · walls active",
+                                "Imported {} meshes · {} riding surfaces · walls active · {}",
                                 sample.geometry.meshes.len(),
-                                sample.collision.rideable_count
+                                sample.collision.rideable_count,
+                                sample.material_note
                             ));
                             self.sample = Some(sample);
                         }
@@ -158,8 +258,28 @@ impl Playground {
                         self.reset_camera();
                     }
                 }
+                let load_texture = ui.add_enabled(
+                    self.source.is_some() && self.texture_job.is_none(),
+                    egui::Button::new("Load texture sample"),
+                );
+                if load_texture.clicked() {
+                    load_texture.surrender_focus();
+                    self.load_texture(ctx);
+                }
+                if self.texture_job.is_some() {
+                    ui.spinner();
+                }
+                if self.texture_preview.is_some()
+                    && !self.texture_open
+                    && ui.button("Show texture").clicked()
+                {
+                    self.texture_open = true;
+                }
             });
             if let Some(message) = &self.sample_message {
+                ui.small(message);
+            }
+            if let Some(message) = &self.texture_message {
                 ui.small(message);
             }
             ui.label("Original test course · keyboard + controller · early movement model");
@@ -373,9 +493,10 @@ impl Playground {
                     );
                 }
                 if let Some(sample) = &self.sample {
-                    let sample = &sample.geometry;
+                    let imported = sample;
+                    let sample = &imported.geometry;
                     let transform = |p: Vec3| sample.preview_position(p);
-                    for mesh in &sample.meshes {
+                    for (mesh_index, mesh) in sample.meshes.iter().enumerate() {
                         for indices in mesh.indices.chunks_exact(3) {
                             let points = [indices[0], indices[1], indices[2]]
                                 .map(|i| transform(mesh.positions[i as usize]));
@@ -384,14 +505,26 @@ impl Playground {
                                 .normalized();
                             let shade =
                                 0.35 + 0.65 * normal.dot(v(0.3, 0.8, -0.4).normalized()).abs();
+                            let layer = imported.mesh_layers[mesh_index];
+                            let color = if layer == 0 {
+                                [166u8, 190, 214]
+                            } else {
+                                [255; 3]
+                            };
                             scene.triangle(
                                 points,
-                                [166u8, 190, 214].map(|c| (c as f32 * shade) as u8),
+                                color.map(|c| (c as f32 * shade) as u8),
+                                [indices[0], indices[1], indices[2]].map(|i| mesh.uv[i as usize]),
+                                layer,
                             );
                         }
                     }
                 }
-                scene.paint(&painter, self.target_format);
+                scene.paint(
+                    &painter,
+                    self.target_format,
+                    self.sample.as_ref().and_then(|s| s.textures.clone()),
+                );
                 if !focused {
                     painter.text(
                         rect.center(),
@@ -402,6 +535,15 @@ impl Playground {
                     );
                 }
             });
+        if let Some(texture) = &self.texture_preview {
+            egui::Window::new("Decoded lightmap sample").open(&mut self.texture_open).default_width(400.0).show(ctx,|ui| {
+                let size=texture.size();
+                ui.label(format!("{} × {} BC1 base level from your ISO",size[0],size[1]));
+                ui.small("This is a decoded lighting atlas. Applying lightmaps to mesh lighting is still in development.");
+                let size=ui.available_width().clamp(64.0,512.0);
+                ui.image((texture.id(),egui::vec2(size,size)));
+            });
+        }
         ctx.request_repaint_after(std::time::Duration::from_millis(if focused {
             8
         } else {
@@ -463,6 +605,8 @@ impl Scene {
             self.vertices.push(crate::graphics::Vertex {
                 position: [p.x, p.y, p.z],
                 color: color.map(|v| v as f32 / 255.0),
+                uv: [0.0; 2],
+                layer: 0,
             });
         }
         let points: Vec<_> = points
@@ -494,8 +638,13 @@ impl Scene {
             depth,
         });
     }
-    fn triangle(&mut self, points: [Vec3; 3], color: [u8; 3]) {
+    fn triangle(&mut self, points: [Vec3; 3], color: [u8; 3], uv: [[f32; 2]; 3], layer: u32) {
+        let start = self.vertices.len();
         self.quad([points[0], points[1], points[2], points[2]], color);
+        for (vertex, index) in self.vertices[start..].iter_mut().zip([0, 1, 2, 0, 2, 2]) {
+            vertex.uv = uv[index];
+            vertex.layer = layer;
+        }
     }
     fn cuboid(&mut self, center: Vec3, size: Vec3, yaw: f32, color: [u8; 3]) {
         self.cuboid_rolled(center, size, yaw, 0.0, color);
@@ -534,7 +683,12 @@ impl Scene {
             );
         }
     }
-    fn paint(mut self, painter: &egui::Painter, target: Option<eframe::wgpu::TextureFormat>) {
+    fn paint(
+        mut self,
+        painter: &egui::Painter,
+        target: Option<eframe::wgpu::TextureFormat>,
+        textures: Option<Arc<crate::graphics::TextureSet>>,
+    ) {
         if let Some(target) = target {
             let to_array = |p: Vec3| [p.x, p.y, p.z, 0.0];
             let scale = self.rect.width().min(self.rect.height()) * 1.8;
@@ -558,6 +712,7 @@ impl Scene {
                         camera,
                         size: self.rect.size(),
                         target,
+                        textures,
                     },
                 ),
             ));

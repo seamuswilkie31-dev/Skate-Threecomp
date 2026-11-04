@@ -19,7 +19,7 @@ fn main() {
 fn run() -> Result<(), String> {
     let args: Vec<_> = env::args_os().skip(1).collect();
     if args.is_empty() || args.len() > 5 {
-        return Err("Usage: skate-threecomp-inspect <source> [--list|--json|--archives|--streams|--mesh-sample|--texture-sample|--archive <disc-path>|--prefix <archive> <member>|--stream <archive> <member>|--decode-block <archive> <member> <block-index>|--rw4-block <archive> <member> <block-index>|--texture-block <archive> <member> <block-index>]".into());
+        return Err("Usage: skate-threecomp-inspect <source> [--list|--json|--archives|--streams|--mesh-sample|--texture-sample|--decode-texture-sample|--material-sample|--archive <disc-path>|--prefix <archive> <member>|--stream <archive> <member>|--decode-block <archive> <member> <block-index>|--rw4-block <archive> <member> <block-index>|--texture-block <archive> <member> <block-index>]".into());
     }
     let mode = args.get(1).map(|arg| arg.to_string_lossy().into_owned());
     if mode.as_deref().is_some_and(|mode| {
@@ -36,6 +36,8 @@ fn run() -> Result<(), String> {
             "--mesh-sample",
             "--texture-sample",
             "--texture-block",
+            "--decode-texture-sample",
+            "--material-sample",
         ]
         .contains(&mode)
     }) {
@@ -54,6 +56,44 @@ fn run() -> Result<(), String> {
     let path = PathBuf::from(&args[0]);
     let info = inspect_source(&path)?;
     let mut output = io::BufWriter::new(io::stdout().lock());
+    if mode.as_deref() == Some("--material-sample") {
+        let bytes = threecomp_engine_core::geometry::load_retail_block(&path, 15)?;
+        let bindings = threecomp_engine_core::materials::inspect_materials(&bytes)?;
+        let assets = threecomp_engine_core::texture::load_retail_diffuse_textures(&path)?;
+        let resolved = bindings
+            .iter()
+            .filter(|b| {
+                b.diffuse_key
+                    .is_some_and(|key| assets.iter().any(|a| a.key == key))
+            })
+            .count();
+        let rows:Vec<_>=bindings.iter().map(|b|serde_json::json!({"draw_index":b.draw_index,"mesh_index":b.mesh_index,
+            "material_group":b.material_group,"material_token":format!("{:08X}",b.material_token),"material_key":format!("{:016X}",b.material_key),
+            "diffuse_key":b.diffuse_key.map(|key|format!("{key:016X}")),"lightmap_key":b.lightmap_key.map(|key|format!("{key:016X}")),
+            "diffuse_resolved":b.diffuse_key.is_some_and(|key|assets.iter().any(|a|a.key==key))})).collect();
+        let report = serde_json::json!({"schema_version":1,"binding_count":bindings.len(),"diffuse_textures_loaded":assets.len(),
+            "textured_meshes":resolved,"plain_meshes":bindings.len()-resolved,"bindings":rows});
+        serde_json::to_writer_pretty(&mut output, &report).map_err(|error| error.to_string())?;
+        return writeln!(output)
+            .and_then(|_| output.flush())
+            .map_err(|error| error.to_string());
+    }
+    if mode.as_deref() == Some("--decode-texture-sample") {
+        let texture = threecomp_engine_core::texture::load_retail_texture(&path)?;
+        let checksum = texture
+            .rgba8
+            .iter()
+            .fold(0xcbf29ce484222325u64, |hash, &byte| {
+                (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+            });
+        let report = serde_json::json!({"schema_version":1,"width":texture.width,"height":texture.height,
+            "rgba_bytes":texture.rgba8.len(),"decoded_checksum_fnv1a64":format!("{checksum:016X}"),
+            "role":"lightmap sample","pixel_export":false});
+        serde_json::to_writer_pretty(&mut output, &report).map_err(|error| error.to_string())?;
+        return writeln!(output)
+            .and_then(|_| output.flush())
+            .map_err(|error| error.to_string());
+    }
     if mode.as_deref() == Some("--texture-sample") {
         let bytes = threecomp_engine_core::geometry::load_retail_block(&path, 0)?;
         let report = texture_report(&bytes)?;
