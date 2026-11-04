@@ -25,7 +25,10 @@
 - [x] Inventory the initial retail disc and record candidate asset families.
 - [x] Identify observed EB3/BIG4 archive signatures and implement bounded index readers.
 - [x] Read capped raw member prefixes through disc and archive indexes.
-- [ ] Investigate SFIL stream-file headers and compression layouts before asset decoding.
+- [x] Index the observed SFIL v3 block and segment layout with exact member bounds.
+- [x] Decode raw and five-byte-header RefPack segments in memory with explicit size budgets.
+- [ ] Investigate decoded RW4 object tables, geometry, and textures.
+- [ ] Verify remaining SFIL variants and codec flags as evidence becomes available.
 - Keep an evidence log for file formats and engine behaviors.
 - Design original Rust interfaces around observed behavior.
 - Add synthetic fixtures and unit coverage without copyrighted payloads.

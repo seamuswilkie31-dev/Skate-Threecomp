@@ -35,6 +35,16 @@ cargo run -p skate-threecomp-launcher --bin skate-threecomp-inspect -- "D:\Games
 
 These modes output JSON and keep all game files in place. Indexing and raw previews do not decode or decompress assets. See [archive reader notes](docs/ARCHIVES.md) for bounds, offset units, and compression limitations.
 
+The next loading layer indexes the observed `SFIL` v3 stream layout and decodes raw or `10 FB` RefPack block segments in memory. Inspect the stream census, one member's blocks, or a decoded block's size and first 32 bytes:
+
+```powershell
+cargo run -p skate-threecomp-launcher --bin skate-threecomp-inspect -- "D:\Games\Skate 3.iso" --streams
+cargo run -p skate-threecomp-launcher --bin skate-threecomp-inspect -- "D:\Games\Skate 3.iso" --stream "data/content/worldDIST_DownTown.big" "data/content/world/stream/DIST_DownTown/cSim_50_450_high.xsf"
+cargo run -p skate-threecomp-launcher --bin skate-threecomp-inspect -- "D:\Games\Skate 3.iso" --decode-block "data/content/worldDIST_DownTown.big" "data/content/world/stream/DIST_DownTown/cSim_50_450_high.xsf" 0
+```
+
+These diagnostic modes do not write decoded game assets to disk. Decoded `RW4` data still needs geometry and texture readers before it can be rendered. See [stream notes](docs/STREAMS.md) for the observed layout and validation scope.
+
 Save data is stored under the platform's local application data directory:
 
 - Windows: `%LOCALAPPDATA%\Threecomp\Skate Threecomp\saves\skater.p`

@@ -25,12 +25,14 @@ Files named `worldDIST_DownTown.big`, `worldDIST_University.big`, and `worldDIST
 
 1. Completed: inspect archive headers and implement original, bounded EB3/BIG4 index readers with synthetic malformed-input checks.
 2. Completed: locate archive members and read raw prefixes capped at 64 KiB in the library (32 bytes in the CLI).
-3. Investigate SFIL stream-file headers and payload compression; establish exact stored and decoded lengths before implementing full asset reads.
+3. Completed for the observed SFIL profile: index blocks and decode raw/RefPack segments into bounded memory. See [stream research](STREAMS.md).
 4. Identify geometry and texture formats before connecting them to a native Rust renderer.
 
 The initial archive scan successfully indexed 50 EB3 archives and one BIG4 archive, totalling 45,217 member records. Counts include all records across archives and are not a count of globally unique assets. Member paths in the Start Park archive include `.xsf` stream files; a sampled member begins with `SFIL`. This is a signature observation rather than a decoded world representation. See [archive details](ARCHIVES.md).
 
-The directory and archive readers support discovery. Runtime asset decoding, world rendering, physics, animation, and gameplay are still pending.
+The SFIL census indexes 4,385 members and 60,495 blocks, with 60,412 segments marked with the observed RefPack flag. A separate decoder check passed 32 sampled blocks across 16 archives. Sample decoded payloads begin with the RW4 signature. The complete block corpus has not been decoded or compared against another implementation.
+
+The directory, archive, and stream readers now support discovery and the initial in-memory decode path. RW4 interpretation, runtime world loading, rendering, physics, animation, and gameplay are still pending.
 
 ## Directory reader reference and limits
 

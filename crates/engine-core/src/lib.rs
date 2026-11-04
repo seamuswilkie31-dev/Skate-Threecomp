@@ -4,6 +4,10 @@ mod inventory;
 pub use inventory::{DiscEntry, DiscInventory, inventory_disc};
 mod archive;
 pub use archive::{ArchiveEntry, ArchiveIndex, inspect_disc_archive};
+mod refpack;
+pub use refpack::decode_refpack;
+mod stream;
+pub use stream::{StreamBlock, StreamIndex, StreamSegment};
 
 use std::{
     collections::HashSet,

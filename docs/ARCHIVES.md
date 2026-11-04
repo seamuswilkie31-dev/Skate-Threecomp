@@ -44,4 +44,4 @@ Synthetic tests cover both layouts inside a larger source with a nonzero base, p
 
 ## Next evidence needed
 
-The sampled Start Park member `cPres_50_-50_high.xsf` begins with `SFIL`. Its structure, the role of external stream data, and compression modes need investigation before implementing a complete world-asset loader. GPU shader translation and geometry decoding are also still pending.
+The sampled Start Park member `cPres_50_-50_high.xsf` begins with `SFIL`. The observed SFIL block layout and its initial decoder are now documented in [stream notes](STREAMS.md). External stream references, additional compression profiles, GPU shader translation, and geometry decoding still need investigation.
