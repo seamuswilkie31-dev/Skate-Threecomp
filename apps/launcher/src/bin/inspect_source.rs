@@ -68,15 +68,21 @@ fn run() -> Result<(), String> {
             let bytes = stream.decode_block(&mut file, base, block, 64 * 1024 * 1024)?;
             if mode.as_deref() == Some("--rw4-block") {
                 let arena = threecomp_engine_core::rw4::Arena::read(&bytes)?;
-                let objects:Vec<_> = arena.objects.iter().map(|object| serde_json::json!({
+                let mut type_counts = std::collections::BTreeMap::<String, usize>::new();
+                let objects:Vec<_> = arena.objects.iter().enumerate().map(|(index,object)| {
+                    let data=arena.object_data(&bytes,index)?;
+                    let prefix:String=data.iter().take(16).map(|byte|format!("{byte:02X}")).collect();
+                    *type_counts.entry(format!("0x{:08X}",object.type_id)).or_default()+=1;
+                    Ok(serde_json::json!({
                     "offset_field": object.offset_field, "resolved_offset": object.resolved_offset,
                     "size": object.size, "alignment": object.alignment, "type_index": object.type_index,
                     "type_id": format!("0x{:08X}", object.type_id), "resource_slot": object.resource_slot,
-                })).collect();
+                    "prefix_hex":prefix,
+                })) }).collect::<Result<Vec<_>,String>>()?;
                 let report = serde_json::json!({"schema_version": 1, "archive_path": archive_path,
                     "member_path": member_path, "block_index": block, "asset_id": format!("0x{:08X}", arena.asset_id),
                     "resource_sizes": arena.resource_sizes, "dictionary_offset": arena.dictionary_offset,
-                    "used_object_count": arena.used_object_count, "objects": objects});
+                    "used_object_count": arena.used_object_count, "objects": objects, "type_counts":type_counts});
                 serde_json::to_writer_pretty(&mut output, &report)
                     .map_err(|error| error.to_string())?;
                 return writeln!(output)

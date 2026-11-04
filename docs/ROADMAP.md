@@ -39,7 +39,9 @@
 - [x] Render an original test course through the launcher's native `wgpu` backend.
 - [x] Add a follow camera, keyboard push/brake/steering, and ollies.
 - [x] Implement fixed-step movement, ramp contact, gravity, and landing tracking.
-- [ ] Add controller input, board rotation, and trick detection.
+- [x] Add native controller input with hotplugging, dead zones, and focus-safe button edges.
+- [x] Animate board flips and detect clean flip/spin landings, switch stance, scores, and simple bails.
+- [ ] Add grinds, richer character animation, and trick chains.
 - [ ] Build a depth-buffered world renderer and improve the movement/collision model.
 - [ ] Connect decoded geometry and textures to the scene.
 

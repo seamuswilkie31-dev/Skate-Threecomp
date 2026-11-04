@@ -7,6 +7,8 @@ pub struct Playground {
     skater: Skater,
     accumulator: f32,
     pending_ollie: bool,
+    pending_flip: bool,
+    controllers: crate::controllers::Controllers,
     camera: Vec3,
     target: Vec3,
 }
@@ -20,6 +22,8 @@ impl Default for Playground {
             skater,
             accumulator: 0.0,
             pending_ollie: false,
+            pending_flip: false,
+            controllers: crate::controllers::Controllers::default(),
             camera,
             target,
         }
@@ -27,6 +31,14 @@ impl Default for Playground {
 }
 
 impl Playground {
+    fn reset(&mut self) {
+        self.skater = Skater::default();
+        self.accumulator = 0.0;
+        self.pending_ollie = false;
+        self.pending_flip = false;
+        self.camera = self.skater.position + v(0.0, 3.5, -7.0);
+        self.target = self.skater.position + v(0.0, 0.8, 2.0);
+    }
     /// Return false when the player asks to return to the launcher.
     pub fn update(&mut self, ctx: &egui::Context) -> bool {
         let mut playing = true;
@@ -38,17 +50,19 @@ impl Playground {
                     playing = false;
                 }
                 if ui.button("Reset (R)").clicked() {
-                    *self = Self::default();
+                    self.reset();
                 }
             });
-            ui.label("Original test course · keyboard controls · early movement model");
+            ui.label("Original test course · keyboard + controller · early movement model");
+            ui.small(&self.controllers.status);
         });
         egui::TopBottomPanel::bottom("prototype_controls").show(ctx, |ui| {
-            ui.label("W / ↑  Push    S / ↓  Brake    A D / ← →  Steer    Space  Ollie    R  Reset");
+            ui.label("W/S Push/brake · A/D Steer · Space Ollie · F Flip · Q/E Air spin · R Reset");
+            ui.small("Pad: stick Steer · A Push · B Brake · X Ollie · Y Flip · LB/RB Spin · Start Reset · Back Launcher");
             ui.horizontal(|ui| {
                 ui.strong(format!("{:.1} km/h", self.skater.speed * 3.6));
                 ui.separator();
-                ui.label(if self.skater.grounded {
+                ui.label(if self.skater.bail_time>0.0 { "BAIL" } else if self.skater.grounded {
                     "RIDING"
                 } else {
                     "AIRBORNE"
@@ -58,8 +72,9 @@ impl Playground {
                     self.skater.landings, self.skater.last_airtime
                 ));
             });
+            ui.label(format!("Score: {} · {} · {}",self.skater.score,self.skater.last_trick,if self.skater.switch_stance { "Switch" } else { "Regular" }));
         });
-        let (dt, focused, reset, escape, jump, input) = ctx.input(|i| {
+        let (dt, focused, reset, escape, jump, flip, mut input) = ctx.input(|i| {
             let left = i.key_down(egui::Key::A) || i.key_down(egui::Key::ArrowLeft);
             let right = i.key_down(egui::Key::D) || i.key_down(egui::Key::ArrowRight);
             (
@@ -68,43 +83,55 @@ impl Playground {
                 i.key_pressed(egui::Key::R),
                 i.key_pressed(egui::Key::Escape),
                 i.key_pressed(egui::Key::Space),
+                i.key_pressed(egui::Key::F),
                 Input {
                     push: i.key_down(egui::Key::W) || i.key_down(egui::Key::ArrowUp),
                     brake: i.key_down(egui::Key::S) || i.key_down(egui::Key::ArrowDown),
                     steer: f32::from(right) - f32::from(left),
                     ollie: false,
+                    flip: false,
+                    spin: f32::from(i.key_down(egui::Key::E)) - f32::from(i.key_down(egui::Key::Q)),
                 },
             )
         });
-        if reset {
-            *self = Self::default();
+        let controller = self.controllers.poll(focused);
+        input.push |= controller.input.push;
+        input.brake |= controller.input.brake;
+        input.steer = (input.steer + controller.input.steer).clamp(-1.0, 1.0);
+        input.spin = (input.spin + controller.input.spin).clamp(-1.0, 1.0);
+        if reset || controller.reset {
+            self.reset();
         }
-        if escape {
+        if escape || controller.menu {
             playing = false;
         }
         if focused && playing {
-            self.pending_ollie |= jump;
+            self.pending_ollie |= jump || controller.input.ollie;
+            self.pending_flip |= flip || controller.input.flip;
             self.accumulator += dt;
             while self.accumulator >= FIXED_DT {
                 self.skater.step(
                     Input {
                         ollie: self.pending_ollie,
+                        flip: self.pending_flip,
                         ..input
                     },
                     FIXED_DT,
                 );
                 self.pending_ollie = false;
+                self.pending_flip = false;
                 self.accumulator -= FIXED_DT;
             }
             let blend = 1.0 - (-6.0 * dt).exp();
-            let desired =
-                self.skater.position - self.skater.forward() * 7.0 + Vec3::new(0.0, 3.5, 0.0);
+            // Keep the follow camera steady while the rider spins in the air.
+            let heading = self.skater.travel_direction();
+            let desired = self.skater.position - heading * 7.0 + Vec3::new(0.0, 3.5, 0.0);
             self.camera = self.camera + (desired - self.camera) * blend;
-            let target =
-                self.skater.position + self.skater.forward() * 2.0 + Vec3::new(0.0, 0.8, 0.0);
+            let target = self.skater.position + heading * 2.0 + Vec3::new(0.0, 0.8, 0.0);
             self.target = self.target + (target - self.target) * blend;
         } else {
             self.pending_ollie = false;
+            self.pending_flip = false;
             self.accumulator = 0.0;
         }
         egui::CentralPanel::default()
@@ -187,13 +214,15 @@ impl Playground {
                     ],
                     [51, 64, 62],
                 );
-                scene.cuboid(p, v(0.28, 0.09, 0.88), yaw, [194, 239, 97]);
+                let roll = self.skater.board_roll;
+                scene.cuboid_rolled(p, v(0.28, 0.09, 0.88), yaw, roll, [194, 239, 97]);
                 for dx in [-0.18, 0.18] {
                     for dz in [-0.29, 0.29] {
-                        scene.cuboid(
-                            p + rotate(v(dx, -0.065, dz), yaw),
+                        scene.cuboid_rolled(
+                            p + rotate(roll_point(v(dx, -0.065, dz), roll), yaw),
                             v(0.1, 0.1, 0.12),
                             yaw,
+                            roll,
                             [33, 39, 41],
                         );
                     }
@@ -257,6 +286,13 @@ fn rotate(p: Vec3, yaw: f32) -> Vec3 {
         -p.x * yaw.sin() + p.z * yaw.cos(),
     )
 }
+fn roll_point(p: Vec3, roll: f32) -> Vec3 {
+    v(
+        p.x * roll.cos() - p.y * roll.sin(),
+        p.x * roll.sin() + p.y * roll.cos(),
+        p.z,
+    )
+}
 
 struct Face {
     points: Vec<Vec3>,
@@ -315,6 +351,9 @@ impl Scene {
         });
     }
     fn cuboid(&mut self, center: Vec3, size: Vec3, yaw: f32, color: [u8; 3]) {
+        self.cuboid_rolled(center, size, yaw, 0.0, color);
+    }
+    fn cuboid_rolled(&mut self, center: Vec3, size: Vec3, yaw: f32, roll: f32, color: [u8; 3]) {
         let points: Vec<_> = [
             (-1., -1., -1.),
             (1., -1., -1.),
@@ -326,7 +365,13 @@ impl Scene {
             (-1., 1., 1.),
         ]
         .into_iter()
-        .map(|(x, y, z)| center + rotate(v(x * size.x / 2., y * size.y / 2., z * size.z / 2.), yaw))
+        .map(|(x, y, z)| {
+            center
+                + rotate(
+                    roll_point(v(x * size.x / 2., y * size.y / 2., z * size.z / 2.), roll),
+                    yaw,
+                )
+        })
         .collect();
         for (face, shade) in [
             ([0, 1, 2, 3], 0.7),

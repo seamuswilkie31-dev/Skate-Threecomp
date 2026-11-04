@@ -11,6 +11,7 @@ use skate_threecomp_launcher::write_inventory_json;
 use threecomp_engine_core::{SourceInfo, inspect_source, inventory_disc};
 
 const APP_NAME: &str = "Skate Threecomp";
+mod controllers;
 mod playground;
 
 #[derive(Default, Serialize, Deserialize)]

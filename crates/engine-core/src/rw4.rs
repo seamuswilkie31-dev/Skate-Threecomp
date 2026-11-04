@@ -21,6 +21,21 @@ pub struct Arena {
 }
 
 impl Arena {
+    /// Access a bounded object payload in an already decoded arena. The caller
+    /// still needs a reader for the object's specific type and platform layout.
+    pub fn object_data<'a>(&self, bytes: &'a [u8], index: usize) -> Result<&'a [u8], String> {
+        let object = self
+            .objects
+            .get(index)
+            .ok_or("RW4 object index is out of range.")?;
+        let end = object
+            .resolved_offset
+            .checked_add(object.size as usize)
+            .ok_or("RW4 object range overflow.")?;
+        bytes
+            .get(object.resolved_offset..end)
+            .ok_or_else(|| "RW4 object data is outside the supplied arena.".into())
+    }
     /// Input is the concatenation of the two decoded SFIL block segments.
     pub fn read(bytes: &[u8]) -> Result<Self, String> {
         if bytes.len() < 0xac || bytes.len() > 64 * 1024 * 1024 {
@@ -138,10 +153,15 @@ mod tests {
     }
     #[test]
     fn resolves_metadata_and_separate_resource_offsets() {
-        let arena = Arena::read(&fixture()).unwrap();
+        let bytes = fixture();
+        let arena = Arena::read(&bytes).unwrap();
         assert_eq!(arena.objects[0].resolved_offset, 240);
         assert_eq!(arena.objects[1].resolved_offset, 256);
         assert_eq!(arena.objects[1].resource_slot, 2);
+        assert_eq!(arena.object_data(&bytes, 0).unwrap().len(), 4);
+        assert_eq!(arena.object_data(&bytes, 1).unwrap().len(), 4);
+        assert!(arena.object_data(&bytes, 2).is_err());
+        assert!(arena.object_data(&bytes[..256], 1).is_err());
     }
     #[test]
     fn rejects_dictionary_resource_and_alignment_errors() {

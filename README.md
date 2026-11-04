@@ -8,6 +8,8 @@ This repository is an independent project. It does not contain or use code from 
 
 An early native skating prototype is now available. Click **Open skating prototype** in the launcher, or run `cargo run -p skate-threecomp-launcher -- --prototype`. Push, steer, brake, and ollie around an original ramp course with a follow camera. It uses placeholder shapes and an original movement model; game-world loading and Skate 3 gameplay reconstruction remain in development. The prototype needs no game files. See [controls and scope](docs/GAMEPLAY.md).
 
+The prototype now accepts controller input and includes board flips, airborne spins, clean-landing scoring, switch stance, and a simple bail/recovery state. On keyboard, use **F** to flip and **Q/E** to spin after an ollie. The HUD shows controller status and the latest trick result.
+
 Phase 2 provides read-only source inspection for Xbox 360 `.iso` and `.xex` files. The launcher checks the XEX2 header or the XDVDFS volume descriptor, walks the root directory tree, locates `default.xex`, and reads its execution metadata (title ID, version, base version, and media ID). It recognizes one Skate 3 retail metadata profile; this is an identifier match, not a cryptographic executable check or proof of runtime compatibility. The game executable is not loaded and Play remains disabled. See [the profile notes](docs/SUPPORTED_BUILDS.md).
 
 The `skate-threecomp-inspect` command-line tool runs the same checks without opening the launcher:

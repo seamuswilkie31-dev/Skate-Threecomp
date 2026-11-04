@@ -14,15 +14,36 @@ The prototype runs in the native launcher window with the existing `eframe`/`wgp
 | S / Down | Brake |
 | A / Left, D / Right | Steer |
 | Space | Ollie while grounded |
+| F | Start a board flip while airborne |
+| Q / E | Hold to spin left/right while airborne |
 | R | Reset position and statistics |
 | Escape | Return to launcher |
 
-The course contains a two-metre ramp, a platform, a descending slope, boundary markers, and speed-reference stripes. The camera follows behind the skater. Speed, grounded state, landing count, and last airtime are displayed. Losing window focus pauses the simulation.
+The course contains a two-metre ramp, a platform, a descending slope, boundary markers, and speed-reference stripes. The camera follows the direction of travel and stays steady during spins. Speed, grounded state, contact count, airtime, score, last trick, and regular/switch stance are displayed. Losing window focus pauses the simulation.
+
+## Controller and tricks
+
+The optional native [gilrs controller backend](https://docs.rs/gilrs/latest/gilrs/) supports connection and disconnection during play. The HUD displays the selected controller name or backend status. Keyboard input works alongside it. Xbox-style labels describe the default layout:
+
+| Controller input | Action |
+|---|---|
+| Left stick | Steer (18% dead zone) |
+| A / South | Hold to push |
+| B / East | Hold to brake |
+| X / West | Ollie |
+| Y / North | Flip |
+| LB / RB | Hold for left/right air spin |
+| Start | Reset |
+| Back / Select | Return to launcher |
+
+Try an ollie followed immediately by a flip. A board flip takes 0.45 seconds. For a spin, release the spin control near 180 or 360 degrees before landing. A landing is clean only when a flip has finished and spin is within 30 degrees of a half-turn multiple. The orientation snaps to that multiple after a clean landing. Odd half-turns change stance while preserving travel direction. Body rotation in the air does not redirect horizontal velocity.
+
+A clean ollie earns 100 prototype points, plus 300 per completed flip and 180 per half-turn. Simply dropping from an edge earns no points. An unfinished rotation causes a bail: no points, zero speed, and a brief 0.8-second recovery. Contact count includes bails. This is an original prototype rule set, not Skate 3's scoring or animation system. Reset clears these statistics. One-shot controller actions require a fresh press after focus or active-controller changes.
 
 ## Movement and rendering scope
 
 Movement advances at a fixed 120 Hz. Frame time is bounded to avoid long catch-up loops after a pause. The prototype models forward acceleration, rolling resistance, braking, speed-dependent steering, a vertical ollie impulse, gravity, ramp contact, and stopping at course bounds. It is an original tuning model rather than measured Skate 3 behavior. It uses a point contact against a height surface, not full skateboard rigid-body or swept collision physics.
 
-The course and placeholder skater are perspective-projected triangles submitted through egui's native wgpu mesh renderer. Near-plane clipping and face sorting provide an initial view without a separate graphics dependency. A depth-buffered world renderer, lighting, textures, board animation, and proper complex collision remain needed for game content. Controller input, grinds, flips, bails, and trick scoring are not implemented yet.
+The course and placeholder skater are perspective-projected triangles submitted through egui's native wgpu mesh renderer. Near-plane clipping and face sorting provide an initial view without a separate graphics dependency. Board and wheels roll together during flips. A depth-buffered world renderer, lighting, textures, full character animation, and proper complex collision remain needed for game content. Grinds, ragdoll bails, trick chains, and a full trick vocabulary are pending.
 
-Automated movement checks cover push/brake/steering, an ollie returning to ground with one landing, ramp following, and course boundaries. The native executable was built on Windows. Desktop capture timed out during manual visual validation, so appearance and keyboard interaction in the running window still need a manual check.
+Automated checks cover movement, ollies, ramp following, clean-flip scoring, unfinished-flip bails, switch landings that preserve travel direction, ledge drops without points, controller dead zones, and focus-safe button edges. The native executable is built on Windows. Physical-controller behavior and visual interaction still need manual validation; the previous desktop capture attempts timed out. Linux builds with gilrs may need libudev development files, as described in its documentation.
