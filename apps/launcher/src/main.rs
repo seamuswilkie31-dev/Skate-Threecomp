@@ -11,6 +11,7 @@ use skate_threecomp_launcher::write_inventory_json;
 use threecomp_engine_core::{SourceInfo, inspect_source, inventory_disc};
 
 const APP_NAME: &str = "Skate Threecomp";
+mod playground;
 
 #[derive(Default, Serialize, Deserialize)]
 struct Settings {
@@ -24,6 +25,7 @@ struct Launcher {
     source_inspection: Option<Result<SourceInfo, String>>,
     message: Option<String>,
     inventory_job: Option<Receiver<Result<String, String>>>,
+    playground: Option<playground::Playground>,
 }
 
 impl Launcher {
@@ -52,6 +54,9 @@ impl Launcher {
             source_inspection,
             message: None,
             inventory_job: None,
+            playground: std::env::args_os()
+                .any(|arg| arg == "--prototype")
+                .then(playground::Playground::default),
         }
     }
 
@@ -179,9 +184,16 @@ impl eframe::App for Launcher {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_inventory();
         ctx.set_visuals(egui::Visuals::dark());
+        if let Some(playground) = &mut self.playground {
+            if !playground.update(ctx) {
+                self.playground = None;
+            }
+            return;
+        }
         egui::CentralPanel::default()
             .frame(egui::Frame::default().fill(egui::Color32::from_rgb(14, 18, 20)).inner_margin(egui::Margin::same(30)))
             .show(ctx, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.set_max_width(760.0);
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("THREECOMP").size(13.0).strong().color(egui::Color32::from_rgb(184, 242, 86)));
@@ -244,6 +256,11 @@ impl eframe::App for Launcher {
                 });
 
                 ui.add_space(22.0);
+                if ui.button("Open skating prototype").clicked() {
+                    self.playground = Some(playground::Playground::default());
+                }
+                ui.label(egui::RichText::new("Ride an original test course with keyboard movement and ollies.").size(12.0));
+                ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     let play = egui::Button::new(egui::RichText::new("PLAY  ·  NOT AVAILABLE YET").strong().color(egui::Color32::from_rgb(88, 98, 94)))
                         .fill(egui::Color32::from_rgb(38, 47, 43));
@@ -258,6 +275,7 @@ impl eframe::App for Launcher {
                 ui.add_space(26.0);
                 ui.separator();
                 ui.label(egui::RichText::new("Bring your own legally obtained game files. No game code or assets are distributed here.").size(11.0).color(egui::Color32::from_rgb(116, 132, 133)));
+                });
             });
     }
 }

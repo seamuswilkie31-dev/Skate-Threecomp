@@ -37,4 +37,4 @@ The stream index permits at most 100,000 blocks per member. Input reads, individ
 
 Synthetic tests cover container-relative offsets, raw and compressed segment concatenation, header-only streams, malformed spans and lengths, unsupported codecs, RefPack literal and match commands, overlapping copies, invalid back-references, truncated input, output budgets, and trailing bytes. Fixtures contain only original synthetic data.
 
-Next is a bounded RW4 object-table reader. Vertex layouts, index buffers, texture tiling, shader translation, and the relationships among simulation, presentation, and texture streams still need evidence. A successful block decode does not establish a playable world or complete format compatibility.
+The [RW4 object-table reader](RW4.md) now indexes the observed decoded profile. Vertex layouts, index buffers, texture tiling, shader translation, and the relationships among simulation, presentation, and texture streams still need evidence. A successful block decode does not establish a playable world or complete format compatibility.

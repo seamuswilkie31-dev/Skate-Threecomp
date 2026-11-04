@@ -28,16 +28,20 @@
 - [x] Index the observed SFIL v3 block and segment layout with exact member bounds.
 - [x] Decode raw and five-byte-header RefPack segments in memory with explicit size budgets.
 - [ ] Investigate decoded RW4 object tables, geometry, and textures.
+- [x] Read observed Xbox 360 RW4 dictionaries and resolve bounded resource regions.
 - [ ] Verify remaining SFIL variants and codec flags as evidence becomes available.
 - Keep an evidence log for file formats and engine behaviors.
 - Design original Rust interfaces around observed behavior.
 - Add synthetic fixtures and unit coverage without copyrighted payloads.
 
-## Phase 4 — Playable slice
+## Phase 4 — Playable slice (prototype started alongside asset research)
 
-- Render a test scene with a native `wgpu` backend.
-- Add camera controls and controller input.
-- Implement a small original test environment before game content integration.
+- [x] Render an original test course through the launcher's native `wgpu` backend.
+- [x] Add a follow camera, keyboard push/brake/steering, and ollies.
+- [x] Implement fixed-step movement, ramp contact, gravity, and landing tracking.
+- [ ] Add controller input, board rotation, and trick detection.
+- [ ] Build a depth-buffered world renderer and improve the movement/collision model.
+- [ ] Connect decoded geometry and textures to the scene.
 
 ## Phase 5 — Game systems
 

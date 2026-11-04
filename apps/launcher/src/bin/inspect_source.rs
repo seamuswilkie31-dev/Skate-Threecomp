@@ -19,7 +19,7 @@ fn main() {
 fn run() -> Result<(), String> {
     let args: Vec<_> = env::args_os().skip(1).collect();
     if args.is_empty() || args.len() > 5 {
-        return Err("Usage: skate-threecomp-inspect <source> [--list|--json|--archives|--streams|--archive <disc-path>|--prefix <archive> <member>|--stream <archive> <member>|--decode-block <archive> <member> <block-index>]".into());
+        return Err("Usage: skate-threecomp-inspect <source> [--list|--json|--archives|--streams|--archive <disc-path>|--prefix <archive> <member>|--stream <archive> <member>|--decode-block <archive> <member> <block-index>|--rw4-block <archive> <member> <block-index>]".into());
     }
     let mode = args.get(1).map(|arg| arg.to_string_lossy().into_owned());
     if mode.as_deref().is_some_and(|mode| {
@@ -32,6 +32,7 @@ fn run() -> Result<(), String> {
             "--streams",
             "--stream",
             "--decode-block",
+            "--rw4-block",
         ]
         .contains(&mode)
     }) {
@@ -40,7 +41,7 @@ fn run() -> Result<(), String> {
     let expected_args = match mode.as_deref() {
         Some("--archive") => 3,
         Some("--prefix" | "--stream") => 4,
-        Some("--decode-block") => 5,
+        Some("--decode-block" | "--rw4-block") => 5,
         Some(_) => 2,
         None => 1,
     };
@@ -50,18 +51,38 @@ fn run() -> Result<(), String> {
     let path = PathBuf::from(&args[0]);
     let info = inspect_source(&path)?;
     let mut output = io::BufWriter::new(io::stdout().lock());
-    if matches!(mode.as_deref(), Some("--stream" | "--decode-block")) {
+    if matches!(
+        mode.as_deref(),
+        Some("--stream" | "--decode-block" | "--rw4-block")
+    ) {
         let archive_path = args[2].to_str().ok_or("Archive path must be UTF-8.")?;
         let member_path = args[3].to_str().ok_or("Member path must be UTF-8.")?;
         let (mut file, base, length) = open_stream_member(&path, archive_path, member_path)?;
         let stream = StreamIndex::read(&mut file, base, length)?;
-        let report = if mode.as_deref() == Some("--decode-block") {
+        let report = if matches!(mode.as_deref(), Some("--decode-block" | "--rw4-block")) {
             let block: usize = args[4]
                 .to_str()
                 .ok_or("Block index must be a number.")?
                 .parse()
                 .map_err(|_| "Block index must be a nonnegative integer.")?;
             let bytes = stream.decode_block(&mut file, base, block, 64 * 1024 * 1024)?;
+            if mode.as_deref() == Some("--rw4-block") {
+                let arena = threecomp_engine_core::rw4::Arena::read(&bytes)?;
+                let objects:Vec<_> = arena.objects.iter().map(|object| serde_json::json!({
+                    "offset_field": object.offset_field, "resolved_offset": object.resolved_offset,
+                    "size": object.size, "alignment": object.alignment, "type_index": object.type_index,
+                    "type_id": format!("0x{:08X}", object.type_id), "resource_slot": object.resource_slot,
+                })).collect();
+                let report = serde_json::json!({"schema_version": 1, "archive_path": archive_path,
+                    "member_path": member_path, "block_index": block, "asset_id": format!("0x{:08X}", arena.asset_id),
+                    "resource_sizes": arena.resource_sizes, "dictionary_offset": arena.dictionary_offset,
+                    "used_object_count": arena.used_object_count, "objects": objects});
+                serde_json::to_writer_pretty(&mut output, &report)
+                    .map_err(|error| error.to_string())?;
+                return writeln!(output)
+                    .and_then(|_| output.flush())
+                    .map_err(|error| error.to_string());
+            }
             let hex: String = bytes
                 .iter()
                 .take(32)

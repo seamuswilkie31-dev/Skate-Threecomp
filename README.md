@@ -6,6 +6,8 @@ This repository is an independent project. It does not contain or use code from 
 
 ## Current phase
 
+An early native skating prototype is now available. Click **Open skating prototype** in the launcher, or run `cargo run -p skate-threecomp-launcher -- --prototype`. Push, steer, brake, and ollie around an original ramp course with a follow camera. It uses placeholder shapes and an original movement model; game-world loading and Skate 3 gameplay reconstruction remain in development. The prototype needs no game files. See [controls and scope](docs/GAMEPLAY.md).
+
 Phase 2 provides read-only source inspection for Xbox 360 `.iso` and `.xex` files. The launcher checks the XEX2 header or the XDVDFS volume descriptor, walks the root directory tree, locates `default.xex`, and reads its execution metadata (title ID, version, base version, and media ID). It recognizes one Skate 3 retail metadata profile; this is an identifier match, not a cryptographic executable check or proof of runtime compatibility. The game executable is not loaded and Play remains disabled. See [the profile notes](docs/SUPPORTED_BUILDS.md).
 
 The `skate-threecomp-inspect` command-line tool runs the same checks without opening the launcher:
@@ -45,6 +47,14 @@ cargo run -p skate-threecomp-launcher --bin skate-threecomp-inspect -- "D:\Games
 
 These diagnostic modes do not write decoded game assets to disk. Decoded `RW4` data still needs geometry and texture readers before it can be rendered. See [stream notes](docs/STREAMS.md) for the observed layout and validation scope.
 
+The observed Xbox 360 RW4 object dictionary can also be inspected after decoding a stream block:
+
+```powershell
+cargo run -p skate-threecomp-launcher --bin skate-threecomp-inspect -- "D:\Games\Skate 3.iso" --rw4-block "data/content/worldDIST_DownTown.big" "data/content/world/stream/DIST_DownTown/cSim_50_450_high.xsf" 0
+```
+
+This reports object types and bounded resource offsets. It does not decode object-specific geometry or textures; see [RW4 notes](docs/RW4.md).
+
 Save data is stored under the platform's local application data directory:
 
 - Windows: `%LOCALAPPDATA%\Threecomp\Skate Threecomp\saves\skater.p`
@@ -70,7 +80,7 @@ The `wgpu` backend uses Direct3D 12 on supported Windows systems and Vulkan wher
 5. **Gameplay systems** — expand animation, tricks, collisions, audio, menus, saves, and additional world content in independently testable slices.
 6. **Release quality** — performance, compatibility, settings, packaging, crash reporting, and documentation.
 
-The project is at the launcher stage. A complete Skate 3 port is a large reverse-engineering effort and is not implied by this initial scaffold.
+The project currently includes a launcher, original skating prototype, and asset inspection and decompression tools. A complete Skate 3 port requires substantial additional reverse engineering and implementation.
 
 ## Independence and contributions
 
