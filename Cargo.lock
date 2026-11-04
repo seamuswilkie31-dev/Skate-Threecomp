@@ -2474,6 +2474,7 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
+ "threecomp-engine-core",
 ]
 
 [[package]]

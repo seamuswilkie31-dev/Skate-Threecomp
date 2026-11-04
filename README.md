@@ -6,7 +6,13 @@ This repository is an independent project. It does not contain or use code from 
 
 ## Current phase
 
-Phase 1 provides a Windows/Linux/macOS native launcher shell with a source file picker for Xbox 360 `.iso` and `.xex` files, remembered source selection, and a save folder control showing the expected `skater.p` path. The launcher does not yet parse either format or start the game. The Play control stays disabled until a game runtime exists.
+Phase 2 adds read-only source inspection for Xbox 360 `.iso` and `.xex` files. The launcher remembers the selected source and checks the XEX2 header or the XDVDFS volume descriptor and root-directory bounds. This identifies the file format; it does not verify the game title or build. The launcher still does not load or start the game, so Play remains disabled.
+
+The `skate-threecomp-inspect` command-line tool runs the same checks without opening the launcher:
+
+```sh
+cargo run -p skate-threecomp-launcher --bin skate-threecomp-inspect -- "D:\Games\Skate 3.iso"
+```
 
 Save data is stored under the platform's local application data directory:
 
@@ -26,8 +32,8 @@ The `wgpu` backend uses Direct3D 12 on supported Windows systems and Vulkan wher
 
 ## Phases
 
-1. **Launcher foundation** — native shell, source selection, settings, and save path discovery. Current phase.
-2. **Source inspection** — document the legally supplied formats, implement read-only ISO/XEX identification and integrity checks, and agree on the supported retail build.
+1. **Launcher foundation** — native shell, source selection, settings, and save path discovery. Complete.
+2. **Source inspection** — read-only ISO/XEX identification and volume-bound checks. Current phase; title/build identification and directory listing remain to be implemented.
 3. **Engine map** — reverse engineer file/container formats and the major runtime systems from a user-supplied copy; record findings and create format fixtures that contain no copyrighted data.
 4. **Playable slice** — load one small environment, a skater, a camera, and controller input; establish the graphics abstraction and core physics loop.
 5. **Gameplay systems** — expand animation, tricks, collisions, audio, menus, saves, and additional world content in independently testable slices.

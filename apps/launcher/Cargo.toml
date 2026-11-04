@@ -8,6 +8,10 @@ license.workspace = true
 name = "skate-threecomp"
 path = "src/main.rs"
 
+[[bin]]
+name = "skate-threecomp-inspect"
+path = "src/bin/inspect_source.rs"
+
 [dependencies]
 anyhow.workspace = true
 directories = "6.0"
@@ -16,3 +20,4 @@ open = "5.3"
 rfd = "0.15"
 serde.workspace = true
 serde_json.workspace = true
+threecomp-engine-core = { path = "../../crates/engine-core" }

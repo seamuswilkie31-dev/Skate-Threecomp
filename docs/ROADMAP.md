@@ -1,18 +1,21 @@
 # Development phases
 
-## Phase 1 — Launcher foundation
+## Phase 1 — Launcher foundation (complete)
 
 - [x] Native Rust GUI shell
 - [x] Select and remember `.iso` or `.xex` source path
 - [x] Show expected `skater.p` path and open its folder
 - [ ] Build and inspect on Windows, Linux, and macOS
 
-## Phase 2 — Source inspection
+## Phase 2 — Source inspection (current)
 
-- Define supported retail builds and expected source layouts.
-- Inspect user-provided input read-only.
-- Detect ISO filesystem metadata and XEX headers without distributing source content.
-- Report missing or unsupported files clearly.
+- [x] Inspect user-provided input read-only.
+- [x] Detect XEX2 headers and common XDVDFS image layouts.
+- [x] Check volume descriptor and root-directory bounds against the image size.
+- [x] Report unsupported or malformed sources in the launcher.
+- [ ] Parse the XDVDFS directory tree and locate `default.xex` without extracting it.
+- [ ] Read title and build identifiers from the executable metadata.
+- [ ] Define and document supported retail builds.
 
 ## Phase 3 — Engine map
 

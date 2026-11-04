@@ -5,6 +5,7 @@ use std::{
 
 use eframe::egui;
 use serde::{Deserialize, Serialize};
+use threecomp_engine_core::{SourceInfo, inspect_source};
 
 const APP_NAME: &str = "Skate Threecomp";
 
@@ -17,6 +18,7 @@ struct Launcher {
     settings: Settings,
     settings_path: PathBuf,
     save_file_path: PathBuf,
+    source_inspection: Option<Result<SourceInfo, String>>,
     message: Option<String>,
 }
 
@@ -32,16 +34,18 @@ impl Launcher {
             .map(|dirs| dirs.data_local_dir().to_path_buf())
             .unwrap_or_else(|| PathBuf::from("."));
         let settings_path = config_dir.join("settings.json");
-        let settings = fs::read(&settings_path)
+        let settings: Settings = fs::read(&settings_path)
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default();
         let save_file_path = data_dir.join("saves").join("skater.p");
+        let source_inspection = settings.source_path.as_deref().map(inspect_source);
 
         Self {
             settings,
             settings_path,
             save_file_path,
+            source_inspection,
             message: None,
         }
     }
@@ -54,10 +58,17 @@ impl Launcher {
             .pick_file()
         {
             self.settings.source_path = Some(path);
+            self.refresh_source_inspection();
             self.persist_settings();
-            self.message =
-                Some("Source selected. The game runtime is planned for a later phase.".into());
+            self.message = Some(
+                "Source selected and inspected. Game launch support is still in development."
+                    .into(),
+            );
         }
+    }
+
+    fn refresh_source_inspection(&mut self) {
+        self.source_inspection = self.settings.source_path.as_deref().map(inspect_source);
     }
 
     fn persist_settings(&mut self) {
@@ -76,13 +87,6 @@ impl Launcher {
             .and_then(|path| path.file_name())
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| "No game source selected".into())
-    }
-
-    fn source_exists(&self) -> bool {
-        self.settings
-            .source_path
-            .as_ref()
-            .is_some_and(|path| path.is_file())
     }
 
     fn open_save_location(&mut self) {
@@ -105,7 +109,7 @@ impl eframe::App for Launcher {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("THREECOMP").size(13.0).strong().color(egui::Color32::from_rgb(184, 242, 86)));
                     ui.add_space(10.0);
-                    ui.label(egui::RichText::new("PHASE 01  /  LAUNCHER FOUNDATION").size(11.0).color(egui::Color32::from_rgb(143, 157, 159)));
+                    ui.label(egui::RichText::new("PHASE 02  /  SOURCE INSPECTION").size(11.0).color(egui::Color32::from_rgb(143, 157, 159)));
                 });
                 ui.add_space(18.0);
                 ui.label(egui::RichText::new("SKATE THREECOMP").size(36.0).strong().color(egui::Color32::WHITE));
@@ -129,9 +133,19 @@ impl eframe::App for Launcher {
                         });
                     });
                     ui.add_space(15.0);
-                    let state = if self.source_exists() { "SOURCE FOUND" } else { "SOURCE NEEDED" };
-                    let color = if self.source_exists() { egui::Color32::from_rgb(184, 242, 86) } else { egui::Color32::from_rgb(244, 190, 95) };
-                    ui.label(egui::RichText::new(state).size(11.0).strong().color(color));
+                    match &self.source_inspection {
+                        None => {
+                            ui.label(egui::RichText::new("SOURCE NEEDED").size(11.0).strong().color(egui::Color32::from_rgb(244, 190, 95)));
+                        }
+                        Some(Ok(info)) => {
+                            ui.label(egui::RichText::new("XBOX SOURCE RECOGNIZED · GAME BUILD NOT VERIFIED").size(11.0).strong().color(egui::Color32::from_rgb(184, 242, 86)));
+                            ui.label(egui::RichText::new(info.summary()).size(12.0).color(egui::Color32::from_rgb(143, 157, 159)));
+                        }
+                        Some(Err(error)) => {
+                            ui.label(egui::RichText::new("SOURCE NOT RECOGNIZED").size(11.0).strong().color(egui::Color32::from_rgb(244, 190, 95)));
+                            ui.label(egui::RichText::new(error).size(12.0).color(egui::Color32::from_rgb(168, 182, 183)));
+                        }
+                    }
                 });
 
                 ui.add_space(14.0);
@@ -149,7 +163,7 @@ impl eframe::App for Launcher {
                         .fill(egui::Color32::from_rgb(38, 47, 43));
                     ui.add_enabled(false, play);
                     ui.add_space(12.0);
-                    ui.label(egui::RichText::new("The native game runtime is not implemented in this phase.").size(12.0).color(egui::Color32::from_rgb(143, 157, 159)));
+                    ui.label(egui::RichText::new("Source inspection works; the native game runtime is still in development.").size(12.0).color(egui::Color32::from_rgb(143, 157, 159)));
                 });
                 if let Some(message) = &self.message {
                     ui.add_space(10.0);
