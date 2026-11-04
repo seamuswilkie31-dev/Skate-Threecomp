@@ -12,6 +12,9 @@ const XDVDFS_DESCRIPTOR_OFFSET: u64 = 0x10000;
 const XDVDFS_SECTOR_SIZE: u64 = 2048;
 const XEX_EXECUTION_INFO_KEY: u32 = 0x0004_0006;
 const SKATE_3_TITLE_ID: u32 = 0x4541_08E6;
+const SKATE_3_RETAIL_MEDIA_ID: u32 = 0x5C08_7C2C;
+const SKATE_3_RETAIL_VERSION: u32 = 3;
+const SKATE_3_RETAIL_BASE_VERSION: u32 = 3;
 
 // Some full-disc Xbox 360 images store the game partition after a video area.
 // These bases cover the common raw and trimmed layouts used by disc tools.
@@ -35,6 +38,13 @@ impl XexInfo {
             SKATE_3_TITLE_ID => Some("Skate 3"),
             _ => None,
         }
+    }
+
+    fn matches_known_skate_3_retail_metadata(&self) -> bool {
+        self.title_id == Some(SKATE_3_TITLE_ID)
+            && self.media_id == Some(SKATE_3_RETAIL_MEDIA_ID)
+            && self.version == Some(SKATE_3_RETAIL_VERSION)
+            && self.base_version == Some(SKATE_3_RETAIL_BASE_VERSION)
     }
 
     fn summary(&self) -> String {
@@ -86,16 +96,34 @@ impl SourceInfo {
         }
     }
 
+    pub fn matches_known_retail_metadata(&self) -> bool {
+        match self {
+            Self::XboxExecutable(info) => info.matches_known_skate_3_retail_metadata(),
+            Self::XboxDiscImage { executable, .. } => executable
+                .as_ref()
+                .is_some_and(XexInfo::matches_known_skate_3_retail_metadata),
+        }
+    }
+
     pub fn status(&self) -> &'static str {
         match self {
+            Self::XboxExecutable(info) if info.matches_known_skate_3_retail_metadata() => {
+                "SKATE 3 RETAIL METADATA PROFILE MATCHED"
+            }
             Self::XboxExecutable(info) if info.title_name().is_some() => {
-                "SKATE 3 EXECUTABLE IDENTIFIED"
+                "SKATE 3 IDENTIFIED · UNLISTED EXECUTABLE PROFILE"
             }
             Self::XboxExecutable(_) => "XBOX EXECUTABLE RECOGNIZED · TITLE NOT IDENTIFIED",
             Self::XboxDiscImage {
                 executable: Some(info),
                 ..
-            } if info.title_name().is_some() => "SKATE 3 DISC IDENTIFIED",
+            } if info.matches_known_skate_3_retail_metadata() => {
+                "SKATE 3 RETAIL METADATA PROFILE MATCHED"
+            }
+            Self::XboxDiscImage {
+                executable: Some(info),
+                ..
+            } if info.title_name().is_some() => "SKATE 3 IDENTIFIED · UNLISTED DISC PROFILE",
             Self::XboxDiscImage {
                 executable: Some(_),
                 ..

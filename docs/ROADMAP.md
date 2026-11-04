@@ -16,7 +16,8 @@
 - [x] Parse the XDVDFS root directory tree and locate `default.xex` without extracting it.
 - [x] Read title ID, version, base version, and media ID from executable metadata.
 - [ ] Recursively inspect nested directories when the executable is not at the root.
-- [ ] Define and document supported retail builds.
+- [x] Record an initial retail metadata profile (identification only; runtime compatibility unverified).
+- [ ] Cryptographically identify the executable and verify additional retail or regional builds.
 
 ## Phase 3 — Engine map
 
