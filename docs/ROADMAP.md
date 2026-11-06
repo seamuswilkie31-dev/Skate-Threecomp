@@ -43,6 +43,8 @@
 - [x] Render an original test course through the launcher's native `wgpu` backend.
 - [x] Add a follow camera, keyboard push/brake/steering, and ollies.
 - [x] Add mouse/controller camera orbit, wheel zoom, recentering, and bounded obstacle-clearance probes.
+- [x] Add conservative in-memory spot markers, stance-preserving return, and marker-first source recovery.
+- [x] Align the placeholder board and rider with bounded nearby support samples while grounded.
 - [x] Implement fixed-step movement, ramp contact, gravity, and landing tracking.
 - [x] Add native controller input with hotplugging, dead zones, and focus-safe button edges.
 - [x] Animate board flips and detect clean flip/spin landings, switch stance, scores, and simple bails.
@@ -57,7 +59,8 @@
 - [ ] Improve full-body collision, rounded edge contacts, and original game collision-format support.
 - [x] Inspect observed 2D texture descriptors and Xenos fetch metadata.
 - [x] Bind four local diffuse textures to six sample meshes and preview a decoded lightmap.
-- [x] Assemble seven selected neighboring static batches with shared placement (110 meshes, 11,602 render triangles, 57 textured meshes).
+- [x] Assemble nine selected neighboring static batches with shared placement (112 meshes, 11,659 render triangles, 57 textured meshes).
+- [x] Extend the source route through bit-identical Z300/400 borders and verify a ride beyond 401 source units with one known earlier drop/landing.
 - [x] Decode verified BC1 base levels with a separately bounded local mip region; retain unsupported packed-tail fallbacks.
 - [x] Add source-scale skating with translation-only geometry, source-only support/bounds, verified route start, and gap recovery that preserves banked points.
 - [ ] Resolve the remaining material keys, packed base tails, other formats, and mip levels.

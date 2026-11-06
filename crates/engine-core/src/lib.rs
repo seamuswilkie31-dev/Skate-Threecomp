@@ -9,6 +9,7 @@ pub use refpack::decode_refpack;
 mod stream;
 pub use stream::{StreamBlock, StreamIndex, StreamSegment};
 mod bc1;
+pub mod checkpoint;
 pub mod collision;
 pub mod geometry;
 pub mod materials;

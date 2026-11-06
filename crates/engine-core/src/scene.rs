@@ -28,6 +28,8 @@ const PATCH: &[(&str, &[usize])] = &[
     ("cPres_550_150_high.xsf", &[15]),
     ("cPres_550_50_high.xsf", &[14]),
     ("cPres_550_250_high.xsf", &[1]),
+    ("cPres_550_350_high.xsf", &[1]),
+    ("cPres_550_450_high.xsf", &[1]),
     ("cPres_650_150_high.xsf", &[1]),
     ("cPres_650_50_high.xsf", &[7]),
 ];
@@ -721,8 +723,8 @@ mod tests {
     fn retail_neighborhood_preserves_all_selected_batches_and_collision() {
         let path = std::env::var_os("THREECOMP_TEST_ISO").expect("Set THREECOMP_TEST_ISO");
         let patch = load_retail_neighborhood(Path::new(&path)).unwrap();
-        assert_eq!(patch.cells.len(), 7);
-        assert_eq!(patch.geometry.meshes.len(), 110);
+        assert_eq!(patch.cells.len(), 9);
+        assert_eq!(patch.geometry.meshes.len(), 112);
         assert_eq!(
             patch
                 .geometry
@@ -730,7 +732,7 @@ mod tests {
                 .iter()
                 .map(|m| m.positions.len())
                 .sum::<usize>(),
-            15703
+            15758
         );
         assert_eq!(
             patch
@@ -739,15 +741,15 @@ mod tests {
                 .iter()
                 .map(|m| m.indices.len() / 3)
                 .sum::<usize>(),
-            11602
+            11659
         );
         let collision = crate::collision::TriangleMesh::from_sample_at(&patch.geometry, |p| {
             patch.placement.apply(p)
         })
         .unwrap();
-        // Eleven faces fall below the miniature preview's collision area
-        // threshold. Source-scale collision below retains 11,593 faces.
-        assert_eq!(collision.triangle_count(), 11591);
+        // Thirty-five faces fall below the expanded miniature's collision area
+        // threshold. Translation-only source collision retains 11,650 faces.
+        assert_eq!(collision.triangle_count(), 11624);
         let placement = collision.placement().unwrap();
         let world = crate::collision::World {
             mesh: Some(&collision),
@@ -769,6 +771,7 @@ mod tests {
         let textured = patch.mesh_layers.iter().filter(|&&layer| layer > 0).count();
         assert_eq!(textured, 57);
         assert_eq!(patch.assets.len(), 15);
+        assert_eq!(patch.warnings.len(), 2);
         assert!(
             patch
                 .mesh_layers
@@ -776,7 +779,7 @@ mod tests {
                 .all(|&l| l as usize <= patch.assets.len())
         );
         eprintln!(
-            "Neighborhood: {} cells / {} meshes /11602 triangles /{textured} textured /{} textures /{} warnings",
+            "Neighborhood: {} cells / {} meshes /11659 triangles /{textured} textured /{} textures /{} warnings",
             patch.cells.len(),
             patch.geometry.meshes.len(),
             patch.assets.len(),
@@ -789,7 +792,7 @@ mod tests {
         let path = std::env::var_os("THREECOMP_TEST_ISO").expect("Set THREECOMP_TEST_ISO");
         let patch = load_retail_neighborhood(Path::new(&path)).unwrap();
         let source = patch.source_environment().unwrap();
-        assert_eq!(source.collision.triangle_count(), 11593);
+        assert_eq!(source.collision.triangle_count(), 11650);
         let mut skater = crate::skating::Skater::default();
         skater.position = source.spawn;
         skater.yaw = source.spawn_yaw;
@@ -842,6 +845,132 @@ mod tests {
             source.spawn,
             source.min,
             source.max,
+            skater.position.z - source.spawn.z
+        );
+    }
+    #[test]
+    #[ignore = "Requires THREECOMP_TEST_ISO pointing to the local retail disc image"]
+    fn retail_extended_source_route_preserves_seams_and_crosses_forward_cells() {
+        let path = std::env::var_os("THREECOMP_TEST_ISO").expect("Set THREECOMP_TEST_ISO");
+        let patch = load_retail_neighborhood(Path::new(&path)).unwrap();
+        let source = patch.source_environment().unwrap();
+        assert_eq!(source.collision.triangle_count(), 11650);
+        assert_eq!(source.collision.rideable_count, 3552);
+        let native_spawn = Vec3::new(512.82666, 84.623, 88.72301);
+        assert_eq!(source.spawn, source.placement.apply(native_spawn));
+        assert_eq!(source.placement.scale, 1.);
+        assert!((source.spawn.y - (native_spawn.y - patch.geometry.min.y + 0.02)).abs() < 0.00001);
+        let cell_meshes = |name: &str| {
+            let mut first = 0;
+            for cell in &patch.cells {
+                let end = first + cell.mesh_count;
+                if cell.member.ends_with(name) {
+                    return &patch.geometry.meshes[first..end];
+                }
+                first = end;
+            }
+            panic!("Expected verified forward cell");
+        };
+        let seam_edges = |meshes: &[geometry::Mesh], z: f32| {
+            let mut edges = HashSet::new();
+            for mesh in meshes {
+                for indices in mesh.indices.chunks_exact(3) {
+                    for pair in [[0, 1], [1, 2], [2, 0]] {
+                        let a = mesh.positions[indices[pair[0]] as usize];
+                        let b = mesh.positions[indices[pair[1]] as usize];
+                        if a.z == z && b.z == z {
+                            let mut edge = [
+                                [a.x.to_bits(), a.y.to_bits(), a.z.to_bits()],
+                                [b.x.to_bits(), b.y.to_bits(), b.z.to_bits()],
+                            ];
+                            edge.sort();
+                            edges.insert(edge);
+                        }
+                    }
+                }
+            }
+            edges
+        };
+        for (left, right, z) in [
+            ("cPres_550_250_high.xsf", "cPres_550_350_high.xsf", 300.),
+            ("cPres_550_350_high.xsf", "cPres_550_450_high.xsf", 400.),
+        ] {
+            let left_edges = seam_edges(cell_meshes(left), z);
+            let right_edges = seam_edges(cell_meshes(right), z);
+            assert_eq!(left_edges.intersection(&right_edges).count(), 6);
+            for edge in left_edges.intersection(&right_edges) {
+                for point in edge {
+                    let p = source.placement.apply(Vec3::new(
+                        f32::from_bits(point[0]),
+                        f32::from_bits(point[1]),
+                        f32::from_bits(point[2]),
+                    ));
+                    let support = source
+                        .terrain()
+                        .support(p.x, p.z, p.y + 0.01)
+                        .expect("Shared source edge remains supported");
+                    assert!((support - p.y).abs() < 0.001);
+                }
+            }
+        }
+        let mut skater = crate::skating::Skater::at_spawn(source.spawn, source.spawn_yaw).unwrap();
+        let crossings = [300., 400., 490.].map(|z| {
+            source
+                .placement
+                .apply(Vec3::new(native_spawn.x, native_spawn.y, z))
+                .z
+        });
+        let drop_boundary = source
+            .placement
+            .apply(Vec3::new(native_spawn.x, native_spawn.y, 200.))
+            .z;
+        let mut crossed = [false; 3];
+        let mut observed_drop = false;
+        let mut ticks = 0;
+        for tick in 0..5000 {
+            let previous = skater.position;
+            skater.step_on(
+                crate::skating::Input {
+                    push: true,
+                    ..Default::default()
+                },
+                crate::skating::FIXED_DT,
+                &source.terrain(),
+            );
+            ticks = tick + 1;
+            assert!(!source.needs_recovery(skater.position));
+            // The known transition near native Z198 leaves the upper surface
+            // and lands on lower source geometry. No synthetic bridge is added.
+            if previous.z < drop_boundary && skater.position.z >= drop_boundary {
+                observed_drop = !skater.grounded;
+            }
+            for (index, &boundary) in crossings.iter().enumerate() {
+                if previous.z < boundary && skater.position.z >= boundary {
+                    assert!(
+                        skater.grounded,
+                        "Forward cell crossing must remain supported"
+                    );
+                    let floor = source
+                        .terrain()
+                        .support(
+                            skater.position.x,
+                            skater.position.z,
+                            skater.position.y + 0.08,
+                        )
+                        .unwrap();
+                    assert!((skater.position.y - floor - crate::rails::BOARD_HEIGHT).abs() < 0.001);
+                    crossed[index] = true;
+                }
+            }
+            if crossed.iter().all(|&value| value) {
+                break;
+            }
+        }
+        assert!(crossed.iter().all(|&value| value));
+        assert!(observed_drop && skater.landings == 1);
+        assert!(skater.position.z - source.spawn.z > 401.);
+        eprintln!(
+            "Extended source route: native Z300/400/490 crossed grounded in {ticks} ticks, {:.4} source units from unchanged native start, one known drop/landing and no recovery",
             skater.position.z - source.spawn.z
         );
     }

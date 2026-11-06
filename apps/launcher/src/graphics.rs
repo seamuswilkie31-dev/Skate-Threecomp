@@ -466,7 +466,7 @@ mod tests {
                     std::path::Path::new(&path),
                 )
                 .unwrap();
-                assert_eq!(patch.geometry.meshes.len(), 110);
+                assert_eq!(patch.geometry.meshes.len(), 112);
                 if source_scale {
                     let environment = patch.source_environment().unwrap();
                     let heading = threecomp_engine_core::skating::Vec3::new(0., 0., 1.);

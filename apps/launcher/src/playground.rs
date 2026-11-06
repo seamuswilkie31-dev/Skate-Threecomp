@@ -6,6 +6,7 @@ use std::{
     sync::Arc,
     sync::mpsc::{self, Receiver, TryRecvError},
 };
+use threecomp_engine_core::checkpoint::Marker;
 use threecomp_engine_core::collision::{Terrain, TriangleMesh, World};
 use threecomp_engine_core::geometry::{self, Sample};
 use threecomp_engine_core::rails::COURSE_RAILS;
@@ -50,6 +51,8 @@ pub struct Playground {
     texture_open: bool,
     source_skating: bool,
     recoveries: u32,
+    marker: Option<Marker>,
+    marker_message: Option<String>,
 }
 
 impl Default for Playground {
@@ -74,6 +77,8 @@ impl Default for Playground {
             texture_open: false,
             source_skating: false,
             recoveries: 0,
+            marker: None,
+            marker_message: None,
         }
     }
 }
@@ -214,6 +219,8 @@ impl Playground {
         });
     }
     fn reset(&mut self) {
+        self.marker = None;
+        self.marker_message = None;
         self.skater = if self.source_skating {
             let source = self
                 .sample
@@ -247,8 +254,70 @@ impl Playground {
         self.camera
             .reset(self.skater.position, self.skater.travel_direction());
     }
+    fn set_marker(&mut self) {
+        let world = World {
+            mesh: self.sample.as_ref().map(|s| &s.collision),
+        };
+        let source = self
+            .sample
+            .as_ref()
+            .and_then(|s| s.source_environment.as_ref())
+            .map(|s| s.terrain());
+        let terrain: &dyn Terrain = if self.source_skating {
+            source.as_ref().expect("Verified marker terrain")
+        } else {
+            &world
+        };
+        match Marker::capture(&self.skater, terrain) {
+            Ok(marker) => {
+                self.marker = Some(marker);
+                self.marker_message =
+                    Some("Spot marker placed · Enter / pad D-pad Down returns here".into());
+            }
+            Err(error) => self.marker_message = Some(format!("Marker not placed: {error}")),
+        }
+    }
+    fn return_to_marker(&mut self, automatic: bool) -> bool {
+        let Some(marker) = &self.marker else {
+            if !automatic {
+                self.marker_message = Some("Place a spot marker first: M / pad D-pad Up".into());
+            }
+            return false;
+        };
+        let world = World {
+            mesh: self.sample.as_ref().map(|s| &s.collision),
+        };
+        let source = self
+            .sample
+            .as_ref()
+            .and_then(|s| s.source_environment.as_ref())
+            .map(|s| s.terrain());
+        let terrain: &dyn Terrain = if self.source_skating {
+            source.as_ref().expect("Verified marker terrain")
+        } else {
+            &world
+        };
+        match marker.restore(&mut self.skater, terrain) {
+            Ok(()) => {
+                self.pending_ollie = false;
+                self.pending_flip = false;
+                self.accumulator = 0.;
+                self.reset_camera();
+                self.marker_message = Some(
+                    "Returned to spot marker · banked points kept, pending chain cleared".into(),
+                );
+                true
+            }
+            Err(error) => {
+                self.marker = None;
+                self.marker_message = Some(format!("Marker unavailable: {error}"));
+                false
+            }
+        }
+    }
     /// Return false when the player asks to return to the launcher.
     pub fn update(&mut self, ctx: &egui::Context) -> bool {
+        let mut ui_restarted = false;
         if let Some(receiver) = &self.texture_job {
             match receiver.try_recv() {
                 Ok(result) => {
@@ -297,6 +366,9 @@ impl Playground {
                                 sample.material_note
                             ));
                             self.sample = Some(sample);
+                            ui_restarted = true;
+                            self.marker = None;
+                            self.marker_message = None;
                             self.source_skating = enter_source;
                             if was_source || enter_source {
                                 self.reset();
@@ -316,6 +388,11 @@ impl Playground {
             }
         }
         let mut playing = true;
+        // A focused egui button can consume Enter/Space this frame, even if its
+        // click handler surrenders focus before gameplay reads keyboard input.
+        let keyboard_claimed_before_ui = ctx.wants_keyboard_input();
+        let mut marker_set = false;
+        let mut marker_return = false;
         egui::TopBottomPanel::top("prototype_header").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.strong("THREECOMP / SKATING PROTOTYPE");
@@ -325,11 +402,13 @@ impl Playground {
                 }
                 let reset = ui.button("Reset (R)");
                 if reset.clicked() {
+                    ui_restarted = true;
                     reset.surrender_focus();
                     self.reset();
                 }
                 let practice = ui.add_enabled(self.sample_job.is_none(),egui::Button::new("Rail practice")).on_hover_text("Start moving toward the first rail. Hold G (pad LT) and tap Space (pad X) to hop onto it.");
                 if practice.clicked() {
+                    ui_restarted = true;
                     practice.surrender_focus();
                     self.source_skating=false;
                     self.reset();
@@ -353,6 +432,7 @@ impl Playground {
                 let ride=ui.add_enabled(self.source.is_some() && self.sample_job.is_none(),egui::Button::new("Skate neighborhood"))
                     .on_hover_text("Original skating movement on selected game geometry at source spacing. Gaps return you to the verified start.");
                 if ride.clicked() {
+                    ui_restarted = true;
                     ride.surrender_focus();
                     if self.sample.as_ref().is_some_and(|s|s.source_environment.is_some()) {
                         self.source_skating=true;
@@ -361,6 +441,7 @@ impl Playground {
                 }
                 let course=ui.add_visible(self.source_skating && self.sample_job.is_none(),egui::Button::new("Test course"));
                 if course.clicked() {
+                    ui_restarted = true;
                     course.surrender_focus();
                     self.source_skating=false;
                     self.reset();
@@ -371,6 +452,7 @@ impl Playground {
                 let placement = self.sample.as_ref().and_then(|sample|if self.source_skating {sample.source_environment.as_ref().map(|s|s.spawn)}else{sample.collision.placement()});
                 let place = ui.add_enabled(placement.is_some() && self.sample_job.is_none(), egui::Button::new(if self.source_skating {"Source start"}else{"Place on mesh"}));
                 if place.clicked() {
+                    ui_restarted = true;
                     place.surrender_focus();
                     self.reset();
                     if let Some(position) = placement {
@@ -407,6 +489,16 @@ impl Playground {
             }
             ui.label(if self.source_skating {"SOURCE-SCALE NEIGHBORHOOD · original movement · selected game geometry"} else {"Original test course · keyboard + controller · early movement model"});
             ui.small(&self.controllers.status);
+            ui.horizontal(|ui| {
+                let set = ui.add_enabled(self.sample_job.is_none(), egui::Button::new("Set spot (M)"));
+                marker_set = set.clicked();
+                if marker_set { set.surrender_focus(); }
+                let back = ui.add_enabled(self.marker.is_some() && self.sample_job.is_none(), egui::Button::new("Return to spot (Enter)"));
+                marker_return = back.clicked();
+                if marker_return { back.surrender_focus(); }
+                ui.small("Pad D-pad Up / Down · session only · R clears spot");
+            });
+            if let Some(message) = &self.marker_message { ui.small(message); }
         });
         egui::TopBottomPanel::bottom("prototype_controls").show(ctx, |ui| {
             ui.label(if self.source_skating {"W/S Push/brake · A/D Steer · Space Ollie · F Flip · Q/E Spin · R Restart source route"}else{"W/S Push/brake · A/D Steer/balance · Space Ollie/pop · F Flip · Q/E Spin · Hold G Grind · R Reset"});
@@ -427,7 +519,7 @@ impl Playground {
                     self.skater.landings, self.skater.last_airtime
                 ));
             });
-            if self.source_skating { ui.small(format!("Recoveries: {} · missing geometry returns to the source start · original game physics remains pending",self.recoveries)); }
+            if self.source_skating { ui.small(format!("Recoveries: {} · gaps return to spot marker or source start · original game physics remains pending",self.recoveries)); }
             ui.label(format!("Banked: {} · Last chain: {} · {} · {}",self.skater.score,self.skater.last_combo,self.skater.last_trick,if self.skater.switch_stance { "Switch" } else { "Regular" }));
             if let Some(grind) = &self.skater.grind {
                 ui.horizontal(|ui| {
@@ -447,25 +539,41 @@ impl Playground {
                 });
             }
         });
-        let (dt, focused, reset, escape, jump, flip, camera_reset, mut input) = ctx.input(|i| {
-            let left = i.key_down(egui::Key::A) || i.key_down(egui::Key::ArrowLeft);
-            let right = i.key_down(egui::Key::D) || i.key_down(egui::Key::ArrowRight);
+        let keyboard_available = !keyboard_claimed_before_ui && !ctx.wants_keyboard_input();
+        let (
+            dt,
+            focused,
+            reset,
+            escape,
+            jump,
+            flip,
+            camera_reset,
+            marker_key,
+            marker_return_key,
+            mut input,
+        ) = ctx.input(|i| {
+            let down = |key| keyboard_available && i.key_down(key);
+            let pressed = |key| keyboard_available && i.key_pressed(key);
+            let left = down(egui::Key::A) || down(egui::Key::ArrowLeft);
+            let right = down(egui::Key::D) || down(egui::Key::ArrowRight);
             (
                 i.stable_dt.min(0.1),
                 i.viewport().focused.unwrap_or(true),
-                i.key_pressed(egui::Key::R),
+                pressed(egui::Key::R),
                 i.key_pressed(egui::Key::Escape),
-                i.key_pressed(egui::Key::Space),
-                i.key_pressed(egui::Key::F),
-                i.key_pressed(egui::Key::C),
+                pressed(egui::Key::Space),
+                pressed(egui::Key::F),
+                pressed(egui::Key::C),
+                pressed(egui::Key::M),
+                pressed(egui::Key::Enter),
                 Input {
-                    push: i.key_down(egui::Key::W) || i.key_down(egui::Key::ArrowUp),
-                    brake: i.key_down(egui::Key::S) || i.key_down(egui::Key::ArrowDown),
+                    push: down(egui::Key::W) || down(egui::Key::ArrowUp),
+                    brake: down(egui::Key::S) || down(egui::Key::ArrowDown),
                     steer: f32::from(right) - f32::from(left),
                     ollie: false,
                     flip: false,
-                    spin: f32::from(i.key_down(egui::Key::E)) - f32::from(i.key_down(egui::Key::Q)),
-                    grind: i.key_down(egui::Key::G),
+                    spin: f32::from(down(egui::Key::E)) - f32::from(down(egui::Key::Q)),
+                    grind: down(egui::Key::G),
                 },
             )
         });
@@ -478,13 +586,29 @@ impl Playground {
         if reset || controller.reset {
             self.reset();
         }
+        let restarted = ui_restarted || reset || controller.reset;
         if escape || controller.menu {
             playing = false;
         }
+        let returned_to_marker = if focused && playing && !restarted && self.sample_job.is_none() {
+            // Returning wins over placement when both commands arrive together.
+            if marker_return || marker_return_key || controller.marker_return {
+                self.return_to_marker(false)
+            } else {
+                if marker_set || marker_key || controller.marker_set {
+                    self.set_marker();
+                }
+                false
+            }
+        } else {
+            false
+        };
         if focused && playing {
-            self.pending_ollie |= jump || controller.input.ollie;
-            self.pending_flip |= flip || controller.input.flip;
-            self.accumulator += dt;
+            if !returned_to_marker {
+                self.pending_ollie |= jump || controller.input.ollie;
+                self.pending_flip |= flip || controller.input.flip;
+                self.accumulator += dt;
+            }
             while self.accumulator >= FIXED_DT {
                 let world = World {
                     mesh: self.sample.as_ref().map(|s| &s.collision),
@@ -517,11 +641,17 @@ impl Playground {
                     })
                     .map(|source| (source.spawn, source.spawn_yaw));
                 if let Some((position, yaw)) = recovery {
-                    self.skater
-                        .recover_at(position, yaw)
-                        .expect("Verified source checkpoint");
+                    if !self.return_to_marker(true) {
+                        self.skater
+                            .recover_at(position, yaw)
+                            .expect("Verified source checkpoint");
+                    }
                     self.recoveries = self.recoveries.saturating_add(1);
                     self.reset_camera();
+                    self.accumulator = 0.;
+                    self.pending_ollie = false;
+                    self.pending_flip = false;
+                    break;
                 }
                 self.pending_ollie = false;
                 self.pending_flip = false;
@@ -552,20 +682,21 @@ impl Playground {
                         },
                     )
                 });
+                let world = World {
+                    mesh: self.sample.as_ref().map(|s| &s.collision),
+                };
+                let source = self
+                    .sample
+                    .as_ref()
+                    .and_then(|s| s.source_environment.as_ref())
+                    .map(|s| s.terrain());
+                let terrain: &dyn Terrain = if self.source_skating {
+                    source.as_ref().expect("Verified source camera terrain")
+                } else {
+                    &world
+                };
+                let rider_basis = crate::riding_pose::basis(&self.skater, terrain);
                 if focused && playing {
-                    let world = World {
-                        mesh: self.sample.as_ref().map(|s| &s.collision),
-                    };
-                    let source = self
-                        .sample
-                        .as_ref()
-                        .and_then(|s| s.source_environment.as_ref())
-                        .map(|s| s.terrain());
-                    let terrain: &dyn Terrain = if self.source_skating {
-                        source.as_ref().expect("Verified source camera terrain")
-                    } else {
-                        &world
-                    };
                     self.camera.update(
                         self.skater.position,
                         self.skater.travel_direction(),
@@ -686,7 +817,6 @@ impl Playground {
                     }
                 }
                 let p = self.skater.position;
-                let yaw = self.skater.yaw;
                 let surface = if self.source_skating {
                     self.sample
                         .as_ref()
@@ -714,23 +844,24 @@ impl Playground {
                 let camera_distance = self.camera.eye - (p + v(0., 1.1, 0.));
                 if camera_distance.dot(camera_distance) > 0.75 * 0.75 {
                     let roll = self.skater.board_roll;
-                    scene.cuboid_rolled(p, v(0.28, 0.09, 0.88), yaw, roll, [194, 239, 97]);
+                    scene.cuboid_basis(p, v(0.28, 0.09, 0.88), rider_basis, roll, [194, 239, 97]);
                     for dx in [-0.18, 0.18] {
                         for dz in [-0.29, 0.29] {
-                            scene.cuboid_rolled(
-                                p + rotate(roll_point(v(dx, -0.065, dz), roll), yaw),
+                            scene.cuboid_basis(
+                                p + rider_basis.transform(roll_point(v(dx, -0.065, dz), roll)),
                                 v(0.1, 0.1, 0.12),
-                                yaw,
+                                rider_basis,
                                 roll,
                                 [33, 39, 41],
                             );
                         }
                     }
                     for dz in [-0.22, 0.22] {
-                        scene.cuboid(
-                            p + rotate(v(0.0, 0.35, dz), yaw),
+                        scene.cuboid_basis(
+                            p + rider_basis.transform(v(0.0, 0.35, dz)),
                             v(0.18, 0.55, 0.18),
-                            yaw,
+                            rider_basis,
+                            0.,
                             [44, 58, 77],
                         );
                     }
@@ -739,24 +870,51 @@ impl Playground {
                         .grind
                         .as_ref()
                         .map_or(input.steer * 0.12, |g| g.balance * 0.22);
-                    scene.cuboid(
-                        p + rotate(v(lean, 0.94, 0.0), yaw),
+                    scene.cuboid_basis(
+                        p + rider_basis.transform(v(lean, 0.94, 0.0)),
                         v(0.45, 0.65, 0.3),
-                        yaw,
+                        rider_basis,
+                        0.,
                         [225, 123, 89],
                     );
-                    scene.cuboid(
-                        p + rotate(v(lean, 1.43, 0.0), yaw),
+                    scene.cuboid_basis(
+                        p + rider_basis.transform(v(lean, 1.43, 0.0)),
                         v(0.28, 0.29, 0.28),
-                        yaw,
+                        rider_basis,
+                        0.,
                         [234, 203, 163],
                     );
                     for dx in [-0.32, 0.32] {
-                        scene.cuboid(
-                            p + rotate(v(dx + lean, 0.89, 0.0), yaw),
+                        scene.cuboid_basis(
+                            p + rider_basis.transform(v(dx + lean, 0.89, 0.0)),
                             v(0.15, 0.5, 0.15),
-                            yaw,
+                            rider_basis,
+                            0.,
                             [234, 203, 163],
+                        );
+                    }
+                }
+                if let Some(marker) = &self.marker {
+                    let origin = marker.position();
+                    let heading = marker.heading();
+                    let yaw = heading.x.atan2(heading.z);
+                    let color = [89, 225, 235];
+                    scene.cuboid(origin + v(0., 0.4, 0.), v(0.055, 0.8, 0.055), 0., color);
+                    scene.cuboid(origin + v(0., 0.82, 0.), v(0.18, 0.12, 0.18), yaw, color);
+                    scene.cuboid(
+                        origin + heading * 0.35 + v(0., 0.6, 0.),
+                        v(0.06, 0.04, 0.7),
+                        yaw,
+                        color,
+                    );
+                    for side in [-1., 1.] {
+                        let wing_yaw = yaw + side * 0.65;
+                        let tip = origin + heading * 0.7 + v(0., 0.6, 0.);
+                        scene.cuboid(
+                            tip - rotate(v(0., 0., 0.14), wing_yaw),
+                            v(0.06, 0.04, 0.28),
+                            wing_yaw,
+                            color,
                         );
                     }
                 }
@@ -949,6 +1107,22 @@ impl Scene {
         self.cuboid_rolled(center, size, yaw, 0.0, color);
     }
     fn cuboid_rolled(&mut self, center: Vec3, size: Vec3, yaw: f32, roll: f32, color: [u8; 3]) {
+        self.cuboid_basis(
+            center,
+            size,
+            crate::riding_pose::Basis::upright(yaw),
+            roll,
+            color,
+        );
+    }
+    fn cuboid_basis(
+        &mut self,
+        center: Vec3,
+        size: Vec3,
+        basis: crate::riding_pose::Basis,
+        roll: f32,
+        color: [u8; 3],
+    ) {
         let points: Vec<_> = [
             (-1., -1., -1.),
             (1., -1., -1.),
@@ -962,10 +1136,10 @@ impl Scene {
         .into_iter()
         .map(|(x, y, z)| {
             center
-                + rotate(
-                    roll_point(v(x * size.x / 2., y * size.y / 2., z * size.z / 2.), roll),
-                    yaw,
-                )
+                + basis.transform(roll_point(
+                    v(x * size.x / 2., y * size.y / 2., z * size.z / 2.),
+                    roll,
+                ))
         })
         .collect();
         for (face, shade) in [
@@ -1032,5 +1206,113 @@ impl Scene {
             }
         }
         painter.add(egui::Shape::mesh(mesh));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn marker_return_clears_queued_actions_keeps_stats_and_reset_clears_spot() {
+        let mut game = Playground::default();
+        game.skater.switch_stance = true;
+        let captured_heading = game.skater.travel_direction();
+        game.set_marker();
+        assert!(game.marker.is_some());
+        let position = game.skater.position;
+        game.skater.position = position + v(2., 3., 2.);
+        game.skater.grounded = false;
+        game.skater.score = 700;
+        game.skater.landings = 4;
+        game.skater.combo.add(300);
+        game.skater.speed = 6.;
+        game.pending_ollie = true;
+        game.pending_flip = true;
+        game.accumulator = 0.09;
+        assert!(game.return_to_marker(false));
+        assert_eq!(game.skater.position, position);
+        assert_eq!(game.skater.travel_direction(), captured_heading);
+        assert_eq!((game.skater.score, game.skater.landings), (700, 4));
+        assert_eq!(game.skater.combo.value(), 0);
+        assert!(game.skater.grounded && game.skater.speed == 0.);
+        assert!(!game.pending_ollie && !game.pending_flip && game.accumulator == 0.);
+        game.reset();
+        assert!(game.marker.is_none() && game.marker_message.is_none());
+        assert_eq!(game.skater.score, 0);
+    }
+
+    #[test]
+    fn failed_capture_retains_previous_spot_and_invalid_return_does_not_move() {
+        let mut game = Playground::default();
+        game.set_marker();
+        let original = game.marker;
+        game.skater.grounded = false;
+        game.set_marker();
+        assert_eq!(game.marker, original);
+        // A marker from a different surface must never be used with this floor.
+        struct Raised;
+        impl Terrain for Raised {
+            fn height(&self, _: f32, _: f32, _: f32) -> f32 {
+                3.
+            }
+            fn blocks_motion(&self, _: Vec3, _: Vec3) -> bool {
+                false
+            }
+        }
+        let raised = Skater::at_spawn(v(0., 3.12, 0.), 0.).unwrap();
+        game.marker = Some(Marker::capture(&raised, &Raised).unwrap());
+        let before = format!("{:?}", game.skater);
+        assert!(!game.return_to_marker(true));
+        assert_eq!(format!("{:?}", game.skater), before);
+        assert!(game.marker.is_none());
+    }
+
+    #[test]
+    #[ignore = "Requires THREECOMP_TEST_ISO pointing to the local retail disc image"]
+    fn retail_spot_marker_and_rider_pose_use_source_surfaces() {
+        let path = std::env::var_os("THREECOMP_TEST_ISO").expect("Set THREECOMP_TEST_ISO");
+        let patch = scene::load_retail_neighborhood(std::path::Path::new(&path)).unwrap();
+        let source = patch.source_environment().unwrap();
+        let terrain = source.terrain();
+        let mut skater = Skater::at_spawn(source.spawn, source.spawn_yaw).unwrap();
+        let marker =
+            Marker::capture(&skater, &terrain).expect("Verified source start can hold a spot");
+        for _ in 0..397 {
+            skater.step_on(
+                Input {
+                    push: true,
+                    ..Default::default()
+                },
+                FIXED_DT,
+                &terrain,
+            );
+        }
+        assert!(skater.grounded && skater.position.z - source.spawn.z > 20.);
+        // The first twenty source units are nearly flat. Check alignment on
+        // the newly connected sloping batch at native Z350 instead.
+        let ramp = source.placement.apply(v(512.82666, 0., 350.));
+        let height = terrain.support(ramp.x, ramp.z, source.max.y).unwrap();
+        let ramp_skater = Skater::at_spawn(v(ramp.x, height + 0.12, ramp.z), 0.).unwrap();
+        let pose = crate::riding_pose::basis(&ramp_skater, &terrain);
+        assert!(
+            pose.up.y >= 0.64 && pose.forward.y.abs() > 0.01,
+            "Board must align with the connected source ramp at native Z350"
+        );
+        skater.score = 900;
+        skater.combo.add(500);
+        skater.step_on(
+            Input {
+                ollie: true,
+                ..Default::default()
+            },
+            FIXED_DT,
+            &terrain,
+        );
+        assert!(!skater.grounded);
+        marker.restore(&mut skater, &terrain).unwrap();
+        assert_eq!(skater.position, source.spawn);
+        assert!(skater.grounded && skater.speed == 0. && skater.combo.value() == 0);
+        assert_eq!(skater.score, 900);
     }
 }

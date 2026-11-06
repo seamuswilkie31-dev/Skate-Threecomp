@@ -21,6 +21,8 @@ The prototype runs in the native launcher window with the existing `eframe`/`wgp
 | Right mouse drag in viewport | Orbit camera |
 | Wheel over viewport | Zoom camera |
 | C | Recenter camera |
+| M | Set a session spot marker |
+| Enter | Return to spot at rest, keeping banked points |
 | Escape | Return to launcher |
 
 The course contains a two-metre ramp, a platform, a descending slope, two practice rails, boundary markers, and speed-reference stripes. The camera follows the direction of travel and stays steady during spins. It permits orbit/zoom and probes imported geometry for clearance; see [camera behavior and limits](CAMERA.md). Speed, riding/air/grind state, contact count, airtime, banked score, pending chain, last trick, and regular/switch stance are displayed. Losing window focus pauses the simulation.
@@ -34,6 +36,7 @@ The optional native [gilrs controller backend](https://docs.rs/gilrs/latest/gilr
 | Left stick | Steer or grind balance (18% dead zone) |
 | Right stick | Orbit camera (18% dead zone) |
 | Right-stick click | Recenter camera |
+| D-pad Up / Down | Set spot / return to spot |
 | A / South | Hold to push |
 | B / East | Hold to brake |
 | X / West | Ollie or rail pop-off |
@@ -61,12 +64,16 @@ A completed rail segment contributes 200 base points plus 40 per metre, calculat
 
 Movement advances at a fixed 120 Hz. Frame time is bounded to avoid long catch-up loops after a pause. The prototype models forward acceleration, rolling resistance, braking, speed-dependent steering, a vertical ollie impulse, gravity, ramp contact, and stopping at course bounds. It is an original tuning model rather than measured Skate 3 behavior. It uses point support, wall-slide probes, and head/ceiling queries, not full skateboard rigid-body collision physics.
 
+While grounded, the placeholder board, wheels, and rider use a local basis inferred from four nearby support samples. The board follows grade and cross-slope; upright yaw remains the fallback during air, grinds, missing samples, or invalid geometry. Sampling uses the movement support ceiling, checks agreement with board height, and bounds the visual tilt to the rideable slope limit. This is render-only alignment, not reconstructed character animation or new contact physics.
+
+Session spot markers make retries easier: **M / D-pad Up** places one, and **Enter / D-pad Down** returns at rest. Return keeps banked/contact statistics while clearing a pending chain and transient actions. Reset or a mode/geometry change clears the marker. Placement checks support, a small footprint, headroom, nearby walls, and bounds; failed placement keeps the previous spot. No save files are written. See [spot controls and validation](SPOTS.md).
+
 The course and placeholder skater use a dedicated native wgpu pass with vertex buffers, a camera uniform, perspective projection, and a `Depth32Float` attachment. A compositing pass places the result inside the launcher. The earlier projected/face-sorted view remains a plain fallback when no native wgpu render state is supplied. Board and wheels roll together during flips. Rails highlight during grinding and the rider leans with balance. A narrow diffuse-texture path is implemented for the optional sample. Full material behavior, character animation, complex collision, ragdoll bails, and a full trick vocabulary remain needed.
 
 With the initial retail ISO selected in the launcher, **Load game mesh sample** loads a narrow static geometry profile, builds simplified collision, and loads verified material associations in a background worker. Six of the nine meshes use four diffuse textures; three unresolved meshes stay plain. The scaled sample appears on the left side of the course. **Place on mesh** resets the skater and places it on an upper riding surface; **R** returns to the original course. Riding surfaces support the board, steep triangles permit sliding along walls, and head queries restrict ceiling contact and grounded headroom. **Load texture sample** opens a separate 512 × 512 lightmap preview; **Show texture** reopens it after closing. Applying lightmaps to mesh lighting is pending. The sample is not a complete map or the game's original collision data. See [collision behavior and limits](COLLISION.md) and [material notes](MATERIALS.md). Source bytes and decoded assets stay in memory. Unsupported images/layouts return a status message while the original course remains usable.
 
 Automated checks cover movement, ollies, ramp following, clean-flip scoring, unfinished-flip bails, switch landings, ledge drops without points, swept rail capture/rejection, reverse/switch rail travel, endpoint/release/pop exits, wall obstruction, stationary-grind rejection, balance bails, chain loss/banking, the exact 180-tick banking boundary, controller dead zones, and focus-safe button edges. Explicit native GPU tests verify occlusion/compositing and actual rendering of the retail geometry sample. The native executable is built on Windows. Manual visual interaction with the latest UI remains to be checked; Windows capture attempts timed out. Linux builds with gilrs may need libudev development files, as described in its documentation.
 
-**Load neighborhood preview** combines seven selected Downtown static batches beside the original course, with 110 meshes and shared render/collision placement. **Place on mesh** also works for this preview. Fifteen supported diffuse payloads cover 57 meshes; 53 stay plain. **Loaded source details** shows selected batches and optional warnings. This is a scaled, partial preview; see [neighborhood scope](NEIGHBORHOOD.md).
+**Load neighborhood preview** combines nine selected Downtown static batches beside the original course, with 112 meshes and shared render/collision placement. **Place on mesh** also works for this preview. Fifteen supported diffuse payloads cover 57 meshes; 55 stay plain. **Loaded source details** shows selected batches and optional warnings. This is a scaled, partial preview; see [neighborhood scope](NEIGHBORHOOD.md).
 
-**Skate neighborhood** enters the [source-scale gameplay slice](SOURCE_SKATING.md). It keeps original vertex distances, uses only imported surfaces, omits the synthetic course/rails, and recovers to a verified start after falling through missing geometry. Speed is shown in source units/s. **Test course** returns to the original prototype; R/Start restarts whichever mode is active.
+**Skate neighborhood** enters the [source-scale gameplay slice](SOURCE_SKATING.md). It keeps original vertex distances, uses only imported surfaces, omits the synthetic course/rails, and recovers to a valid spot marker or verified start after falling through missing geometry. The extended tested route crosses native Z300/400/490 and includes an earlier drop and landing. Speed is shown in source units/s. **Test course** returns to the original prototype; R/Start restarts whichever mode is active.

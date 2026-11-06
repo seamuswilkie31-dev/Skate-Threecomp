@@ -50,7 +50,7 @@ The neighborhood's two remaining optional decoder warnings are format-6 RGBA8 te
 
 ## Use and validation
 
-In the prototype, **Load texture sample** opens the decoded 512 × 512 lightmap. **Show texture** reopens it after closing. The lighting atlas is not applied to diffuse UVs. **Load game mesh sample** loads the separately verified diffuse maps for six meshes in the native renderer. **Load neighborhood preview** and **Skate neighborhood** use 15 supported diffuse assets across 57 of 110 meshes; 53 meshes remain plain, with two optional decoder warnings. Decoded pixels stay in memory; no game assets are exported.
+In the prototype, **Load texture sample** opens the decoded 512 × 512 lightmap. **Show texture** reopens it after closing. The lighting atlas is not applied to diffuse UVs. **Load game mesh sample** loads the separately verified diffuse maps for six meshes in the native renderer. **Load neighborhood preview** and **Skate neighborhood** use 15 supported diffuse assets across 57 of 112 meshes; 55 meshes remain plain, with two optional decoder warnings. The added forward terrain meshes reference unresolved key `2C70170A000A000D`, so they extend geometry without adding decoded textures. Decoded pixels stay in memory; no game assets are exported.
 
 The inspector emits metadata or decoder summaries as JSON:
 

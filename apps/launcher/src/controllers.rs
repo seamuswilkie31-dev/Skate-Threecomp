@@ -9,6 +9,8 @@ pub struct Frame {
     pub menu: bool,
     pub camera_look: [f32; 2],
     pub camera_reset: bool,
+    pub marker_set: bool,
+    pub marker_return: bool,
 }
 
 pub struct Controllers {
@@ -78,7 +80,9 @@ impl Controllers {
             | (u8::from(pad.is_pressed(Button::North)) << 1)
             | (u8::from(pad.is_pressed(Button::Start)) << 2)
             | (u8::from(pad.is_pressed(Button::Select)) << 3)
-            | (u8::from(pad.is_pressed(Button::RightThumb)) << 4);
+            | (u8::from(pad.is_pressed(Button::RightThumb)) << 4)
+            | (u8::from(pad.is_pressed(Button::DPadUp)) << 5)
+            | (u8::from(pad.is_pressed(Button::DPadDown)) << 6);
         let edges = self
             .edges
             .update(pressed, focused && old_active == self.active);
@@ -103,6 +107,8 @@ impl Controllers {
                 deadzone(pad.value(Axis::RightStickY)),
             ],
             camera_reset: edges & 16 != 0,
+            marker_set: edges & 32 != 0,
+            marker_return: edges & 64 != 0,
         }
     }
 }

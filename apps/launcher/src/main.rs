@@ -20,6 +20,7 @@ mod camera;
 mod controllers;
 mod graphics;
 mod playground;
+mod riding_pose;
 
 #[derive(Default, Serialize, Deserialize)]
 struct Settings {

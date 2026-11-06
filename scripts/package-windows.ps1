@@ -268,11 +268,14 @@ SKATE THREECOMP - PORTABLE WINDOWS PROTOTYPE
    Controller: A push, B brake, X ollie, Y flip, LB/RB spin, Start reset.
 5. Camera: right-drag in the viewport or pad right stick to orbit.
    Scroll over the viewport to zoom; C / right-stick click to recenter.
+6. M / pad D-pad Up sets a spot on a broad supported surface.
+   Enter / D-pad Down returns at rest, keeping banked points. R clears the spot.
 
 Your own ISO is needed for Load game mesh sample, Load neighborhood preview,
 Skate neighborhood, and Load texture sample. Skate neighborhood uses source
 spacing and a verified start; R restarts that route and Test course returns
-to the original course. Gaps recover automatically, keeping banked points.
+to the original course. Gaps recover to a valid spot or source start,
+keeping banked points. Spot markers stay in memory and do not edit game saves.
 The miniature preview retains Place on mesh for inspection.
 Select it in the launcher before loading those samples. No game data is bundled.
 The original game's full Play action remains unavailable. This is a native Rust
