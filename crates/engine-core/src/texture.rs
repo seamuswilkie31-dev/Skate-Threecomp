@@ -128,8 +128,9 @@ pub fn load_retail_diffuse_textures(image: &std::path::Path) -> Result<Vec<Textu
     Ok(assets)
 }
 
-/// Decode only the observed base-level profile. Packed mip tails, nonzero GPU
-/// base offsets, other formats/sign/swizzle modes, and other endian modes error.
+/// Decode the bounded base level only. Packed lower mips are permitted when
+/// their page address describes the verified contiguous region after a complete
+/// base surface. Mip-tail pixels and GPU host pointers are never followed.
 pub fn decode_bc1_mip0(bytes: &[u8], object_index: usize) -> Result<DecodedTexture, String> {
     let textures = inspect_textures(bytes)?;
     let info = textures
@@ -139,24 +140,66 @@ pub fn decode_bc1_mip0(bytes: &[u8], object_index: usize) -> Result<DecodedTextu
     if info.format_id != 18
         || info.endian_mode != 1
         || !info.tiled
-        || info.packed_mips
         || info.fetch_words[0] & 0x3fc != 0
         || info.fetch_words[1] >> 12 != 0
-        || info.fetch_words[5] >> 12 != 0
         || info.fetch_words[5] & 4 != 0
         || info.fetch_words[3] & 0x7ffff != 0xd10
         || (info.fetch_words[4] >> 2) & 15 != 0
     {
-        return Err("Unsupported BC1 preview profile (requires tiled mip zero, identity swizzle, unsigned channels, endian mode 1, no packed mips or base offsets).".into());
+        return Err("Unsupported BC1 preview profile (requires tiled mip zero, identity swizzle, unsigned channels, endian mode 1, and a zero base offset).".into());
     }
     let arena = Arena::read(bytes)?;
     let resource = arena.object_data(bytes, info.resource_object)?;
+    validate_bc1_mip_region(info, resource.len())?;
     let rgba8 = crate::bc1::decode(resource, info.width, info.height, info.pitch_pixels)?;
     Ok(DecodedTexture {
         width: info.width,
         height: info.height,
         rgba8,
     })
+}
+
+fn validate_bc1_mip_region(info: &TextureInfo, resource_bytes: usize) -> Result<(), String> {
+    // Xenos fetch word 5 stores packed_mips at bit 11 and the mip page address
+    // at bits 12..31. These serialized assets use a zero base and a relative
+    // mip offset; accept only an offset exactly after the local base footprint.
+    let mip_offset = (info.fetch_words[5] & 0xfffff000) as usize;
+    if !info.packed_mips && mip_offset == 0 {
+        return Ok(());
+    }
+    let unsupported = || {
+        "Unsupported BC1 preview profile (mip region must follow a complete, page-aligned local base surface).".to_string()
+    };
+    if !(128..=4096).contains(&info.width)
+        || !(128..=4096).contains(&info.height)
+        || !info.width.is_power_of_two()
+        || !info.height.is_power_of_two()
+        || info.pitch_pixels != info.width
+    {
+        return Err(unsupported());
+    }
+    // At this size each axis contains whole 32x32 BC1-block tiles, so the
+    // tiled base footprint equals width*height/2 and is outside the packed tail.
+    let base_bytes = info.width as usize * info.height as usize / 2;
+    let max_mip = (info.fetch_words[4] >> 6) & 15;
+    let first_mip_bytes = ((info.width / 8).div_ceil(32) as usize)
+        * ((info.height / 8).div_ceil(32) as usize)
+        * 32
+        * 32
+        * 8;
+    let remaining = resource_bytes
+        .checked_sub(mip_offset)
+        .ok_or_else(unsupported)?;
+    if mip_offset != base_bytes
+        || !mip_offset.is_multiple_of(4096)
+        || !resource_bytes.is_multiple_of(4096)
+        || max_mip == 0
+        || max_mip > info.width.max(info.height).ilog2()
+        || remaining < first_mip_bytes
+    {
+        return Err(unsupported());
+    }
+    Ok(())
 }
 
 pub fn load_retail_texture(image: &std::path::Path) -> Result<DecodedTexture, String> {
@@ -342,6 +385,72 @@ mod tests {
         put(&mut bytes, 172 + 48, 0x200);
         assert!(decode_bc1_mip0(&bytes, 0).is_err());
     }
+    fn mip_fixture(width: u32, height: u32, mip_offset: u32, resource_bytes: usize) -> Vec<u8> {
+        let mut bytes = fixture();
+        bytes.resize(272 + resource_bytes, 0);
+        for (offset, value) in [
+            (0x54, resource_bytes as u32),
+            (256, resource_bytes as u32),
+            (172 + 28, 0x80000002 | ((width / 32) << 22)),
+            (172 + 36, (width - 1) | ((height - 1) << 13)),
+            (172 + 40, 0xd10),
+            (172 + 44, width.max(height).ilog2() << 6),
+            (172 + 48, mip_offset | 0xa00),
+        ] {
+            put(&mut bytes, offset, value);
+        }
+        // A red BC1 block at local base offset zero. Appended mips use green
+        // markers, which must never contribute pixels to the base-level image.
+        bytes[272..280].copy_from_slice(&[0xf8, 0, 7, 0xe0, 0, 0, 0, 0]);
+        if mip_offset as usize + 8 <= resource_bytes {
+            let offset = 272 + mip_offset as usize;
+            bytes[offset..offset + 8].copy_from_slice(&[7, 0xe0, 0xf8, 0, 0, 0, 0, 0]);
+        }
+        bytes
+    }
+    #[test]
+    fn bc1_mip_region_is_local_bounded_and_not_sampled() {
+        let mut bytes = mip_fixture(512, 256, 0x10000, 106496);
+        let decoded = decode_bc1_mip0(&bytes, 0).unwrap();
+        assert_eq!((decoded.width, decoded.height), (512, 256));
+        assert_eq!(&decoded.rgba8[..4], &[255, 0, 0, 255]);
+        // Changing every byte in the bounded mip region cannot change mip zero.
+        bytes[272 + 0x10000..].fill(0xff);
+        assert_eq!(decode_bc1_mip0(&bytes, 0).unwrap().rgba8, decoded.rgba8);
+        // A complete no-mips texture has the same base output.
+        put(&mut bytes, 172 + 48, 0x200);
+        put(&mut bytes, 172 + 44, 0);
+        assert_eq!(decode_bc1_mip0(&bytes, 0).unwrap().rgba8, decoded.rgba8);
+    }
+    #[test]
+    fn bc1_rejects_overlapping_external_or_truncated_mip_regions() {
+        for (mip_offset, resource_bytes) in [
+            (0, 106496),
+            (0xf000, 106496),
+            (0x11000, 106496),
+            (0xfffff000, 106496),
+            (0x10000, 65536),
+            (0x10000, 65536 + 4096),
+            (0x10000, 106495),
+        ] {
+            let bytes = mip_fixture(512, 256, mip_offset, resource_bytes);
+            assert!(decode_bc1_mip0(&bytes, 0).is_err());
+        }
+        for (width, height) in [(64, 64), (384, 256), (512, 64)] {
+            assert!(decode_bc1_mip0(&mip_fixture(width, height, 0x10000, 106496), 0).is_err());
+        }
+        let mut bytes = mip_fixture(512, 256, 0x10000, 106496);
+        for (offset, value) in [
+            (172 + 32, 0x1052),  // Nonzero base address remains unsupported.
+            (172 + 44, 0),       // Mip bytes with no declared mip level.
+            (172 + 44, 15 << 6), // More levels than the dimensions can contain.
+        ] {
+            let old = word(&bytes, offset);
+            put(&mut bytes, offset, value);
+            assert!(decode_bc1_mip0(&bytes, 0).is_err());
+            put(&mut bytes, offset, old);
+        }
+    }
     #[test]
     #[ignore = "Requires THREECOMP_TEST_ISO pointing to the local retail disc image"]
     fn retail_bc1_base_level_decodes_with_varied_opaque_pixels() {
@@ -356,9 +465,42 @@ mod tests {
             .collect();
         assert!(colors.len() > 256);
         assert!(texture.rgba8.chunks_exact(4).all(|p| p[3] == 255));
+        let checksum = texture
+            .rgba8
+            .iter()
+            .fold(0xcbf29ce484222325u64, |hash, &byte| {
+                (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+            });
+        assert_eq!(checksum, 0xe1eae908fdff7c68);
         eprintln!(
             "Decoded retail lightmap: {} distinct RGBA colors",
             colors.len()
         );
+    }
+    #[test]
+    #[ignore = "Requires THREECOMP_TEST_ISO pointing to the local retail disc image"]
+    fn retail_bc1_base_with_separate_mips_resolves_three_local_meshes() {
+        let path = std::env::var_os("THREECOMP_TEST_ISO").expect("Set THREECOMP_TEST_ISO");
+        let patch = crate::scene::load_retail_neighborhood(std::path::Path::new(&path)).unwrap();
+        assert_eq!(
+            patch.mesh_layers.iter().filter(|&&layer| layer > 0).count(),
+            57
+        );
+        assert_eq!(patch.assets.len(), 15);
+        for (key, checksum) in [
+            (0x2c70170a000d01b1, 0xe0d0c50b76449046),
+            (0x2c70170a001d0183, 0xaa5fa63c9da517c7),
+        ] {
+            let asset = patch.assets.iter().find(|asset| asset.key == key).unwrap();
+            assert_eq!((asset.pixels.width, asset.pixels.height), (512, 256));
+            let actual = asset
+                .pixels
+                .rgba8
+                .iter()
+                .fold(0xcbf29ce484222325u64, |hash, &byte| {
+                    (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+                });
+            assert_eq!(actual, checksum);
+        }
     }
 }

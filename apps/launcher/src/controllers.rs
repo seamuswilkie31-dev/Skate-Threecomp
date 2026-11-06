@@ -7,6 +7,8 @@ pub struct Frame {
     pub input: Input,
     pub reset: bool,
     pub menu: bool,
+    pub camera_look: [f32; 2],
+    pub camera_reset: bool,
 }
 
 pub struct Controllers {
@@ -48,7 +50,10 @@ impl Controllers {
             let meaningful = match event.event {
                 EventType::ButtonPressed(_, _) => true,
                 EventType::AxisChanged(axis, value, _) => {
-                    axis == Axis::LeftStickX && value.abs() > 0.4
+                    matches!(
+                        axis,
+                        Axis::LeftStickX | Axis::RightStickX | Axis::RightStickY
+                    ) && value.abs() > 0.4
                 }
                 _ => false,
             };
@@ -72,7 +77,8 @@ impl Controllers {
         let pressed = u8::from(pad.is_pressed(Button::West))
             | (u8::from(pad.is_pressed(Button::North)) << 1)
             | (u8::from(pad.is_pressed(Button::Start)) << 2)
-            | (u8::from(pad.is_pressed(Button::Select)) << 3);
+            | (u8::from(pad.is_pressed(Button::Select)) << 3)
+            | (u8::from(pad.is_pressed(Button::RightThumb)) << 4);
         let edges = self
             .edges
             .update(pressed, focused && old_active == self.active);
@@ -92,6 +98,11 @@ impl Controllers {
             },
             reset: edges & 4 != 0,
             menu: edges & 8 != 0,
+            camera_look: [
+                deadzone(pad.value(Axis::RightStickX)),
+                deadzone(pad.value(Axis::RightStickY)),
+            ],
+            camera_reset: edges & 16 != 0,
         }
     }
 }

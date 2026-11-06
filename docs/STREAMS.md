@@ -4,7 +4,7 @@
 
 This original Rust implementation is based on direct read-only observations of the user-supplied retail image. The census successfully indexed 4,385 archived `.xsf` members, containing 60,495 blocks and 60,412 segments with codec flag 1. Counts include repeated records across archives, not globally unique world objects. The census checks metadata; it does not decompress every block.
 
-Decoder validation separately covered 32 sampled blocks: first and last blocks from the member with the most blocks in each of 16 archives containing nonempty streams. Every sampled decode completed with output lengths matching its segment descriptors. Additional initial Downtown samples produced decoded data beginning with `89 52 57 34` (RW4). This identifies a candidate container; no geometry or texture interpretation is implemented yet.
+Decoder validation separately covered 32 sampled blocks: first and last blocks from the member with the most blocks in each of 16 archives containing nonempty streams. Every sampled decode completed with output lengths matching its segment descriptors. Additional initial Downtown samples produced decoded data beginning with `89 52 57 34` (RW4). This layer returns container bytes; separate [geometry](GEOMETRY.md), [material](MATERIALS.md), and [texture](TEXTURES.md) readers interpret selected RW4 profiles.
 
 The readers and decoder contain no code from Skate 3 Recompiled. Game payloads and generated reports are kept out of the repository.
 
@@ -37,4 +37,4 @@ The stream index permits at most 100,000 blocks per member. Input reads, individ
 
 Synthetic tests cover container-relative offsets, raw and compressed segment concatenation, header-only streams, malformed spans and lengths, unsupported codecs, RefPack literal and match commands, overlapping copies, invalid back-references, truncated input, output budgets, and trailing bytes. Fixtures contain only original synthetic data.
 
-The [RW4 object-table reader](RW4.md) now indexes the observed decoded profile. Vertex layouts, index buffers, texture tiling, shader translation, and the relationships among simulation, presentation, and texture streams still need evidence. A successful block decode does not establish a playable world or complete format compatibility.
+The [RW4 object-table reader](RW4.md) indexes the observed decoded profile. Selected static vertex/index layouts and tiled BC1/RGB565 base textures now feed the [neighborhood slice](NEIGHBORHOOD.md). Further layouts, shader translation, and the full relationships among simulation, presentation, and texture streams need additional evidence. A successful block decode does not establish a complete playable world or full format compatibility.

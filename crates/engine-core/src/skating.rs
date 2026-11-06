@@ -89,7 +89,6 @@ pub struct Skater {
     travel_yaw: f32,
     pub bail_time: f32,
     pub switch_stance: bool,
-    air_start_yaw: f32,
     air_was_ollie: bool,
 }
 impl Default for Skater {
@@ -116,7 +115,6 @@ impl Default for Skater {
             travel_yaw: 0.0,
             bail_time: 0.0,
             switch_stance: false,
-            air_start_yaw: 0.0,
             air_was_ollie: false,
         }
     }
@@ -303,15 +301,36 @@ impl Skater {
         } else {
             self.travel_yaw
         };
-        let movement = Vec3::new(heading.sin(), 0.0, heading.cos()) * (self.speed * dt);
-        let next = self.position + movement;
-        if !terrain.contains_motion(self.position, next)
-            || terrain.blocks_motion(self.position, next)
-        {
-            self.speed = 0.0;
-        } else {
-            self.position.x = next.x;
-            self.position.z = next.z;
+        let requested = Vec3::new(heading.sin(), 0.0, heading.cos()) * (self.speed * dt);
+        let mut motion = terrain.resolve_motion(self.position, self.position + requested);
+        if !self.grounded && worsens_body_overlap(terrain, previous_position, motion.position) {
+            // Head sweeps handle upward travel separately. Reject side entry
+            // into an overhang before gravity or landing can leave us inside it.
+            motion.position = previous_position;
+            motion.blocked = true;
+        }
+        let movement = Vec3::new(
+            motion.position.x - self.position.x,
+            0.,
+            motion.position.z - self.position.z,
+        );
+        self.position.x = motion.position.x;
+        self.position.z = motion.position.z;
+        if motion.blocked {
+            self.speed = (movement.dot(movement).sqrt() / dt).min(self.speed);
+            if movement.dot(movement) > 1e-10 {
+                let heading = movement.x.atan2(movement.z);
+                if self.grounded {
+                    self.yaw = heading
+                        - if self.switch_stance {
+                            std::f32::consts::PI
+                        } else {
+                            0.
+                        };
+                } else {
+                    self.travel_yaw = heading;
+                }
+            }
         }
         let next_surface = terrain.support(self.position.x, self.position.z, support_ceiling);
         let floor = next_surface.map(|height| height + rails::BOARD_HEIGHT);
@@ -322,10 +341,20 @@ impl Skater {
             if let Some(change) = change
                 && change.abs() <= 0.2
             {
-                self.position.y = floor.unwrap();
-                // Grade changes affect speed while riding the ramp.
-                if movement.dot(movement) > 0.000001 {
-                    self.speed = (self.speed - change * 4.0).clamp(0.0, 12.0);
+                let standing = Vec3::new(self.position.x, floor.unwrap(), self.position.z);
+                if worsens_body_overlap(terrain, previous_position, standing)
+                    || (change > 0. && terrain.ceiling_hit(previous_position, standing).is_some())
+                {
+                    // A required support rise cannot leave the board below its
+                    // floor. Reject the horizontal move rather than teleporting.
+                    self.position = previous_position;
+                    self.speed = 0.;
+                } else {
+                    self.position.y = standing.y;
+                    // Grade changes affect speed while riding the ramp.
+                    if movement.dot(movement) > 0.000001 {
+                        self.speed = (self.speed - change * 4.0).clamp(0.0, 12.0);
+                    }
                 }
             } else if change.is_some_and(|change| change > 0.0) {
                 self.position.x -= movement.x;
@@ -355,7 +384,17 @@ impl Skater {
             }
             self.airtime += dt;
             self.vertical_speed -= 16.0 * dt;
-            self.position.y += self.vertical_speed * dt;
+            let from = self.position;
+            let to = from + Vec3::new(0., self.vertical_speed * dt, 0.);
+            if self.vertical_speed > 0.
+                && let Some(hit) = terrain.ceiling_hit(from, to)
+            {
+                self.position.y =
+                    (hit.point.y - crate::collision::BODY_HEAD_HEIGHT - 0.005).clamp(from.y, to.y);
+                self.vertical_speed = 0.;
+            } else {
+                self.position.y = to.y;
+            }
             if input.grind
                 && self.grind_cooldown <= 0.0
                 && self.clean_rotation()
@@ -419,7 +458,6 @@ impl Skater {
             self.combo.remaining = BANK_DELAY;
         }
         self.air_was_ollie = ollie;
-        self.air_start_yaw = self.yaw;
         self.travel_yaw = self.yaw
             + if self.switch_stance {
                 std::f32::consts::PI
@@ -435,8 +473,15 @@ impl Skater {
     fn finish_trick(&mut self) {
         let half_turns = (self.air_spin / std::f32::consts::PI).round();
         if self.clean_rotation() {
-            self.yaw = self.air_start_yaw + half_turns * std::f32::consts::PI;
             self.switch_stance ^= (half_turns.abs() as u32) % 2 == 1;
+            // A wall slide can change air travel without changing trick spin.
+            // Reconcile the clean landing with the retained travel direction.
+            self.yaw = self.travel_yaw
+                - if self.switch_stance {
+                    std::f32::consts::PI
+                } else {
+                    0.
+                };
             self.last_trick = match (self.completed_flips > 0, half_turns.abs() >= 1.0) {
                 (true, true) => "Flip + spin landed",
                 (true, false) => "Kickflip landed",
@@ -492,6 +537,29 @@ impl Skater {
     }
 }
 
+/// Center-line body probes prevent new overlap without inventing a full body
+/// volume or a depenetration direction. If already overlapping, equal or better
+/// nearest vertical clearance permits small escape steps; worse clearance stops.
+fn worsens_body_overlap(
+    terrain: &(impl crate::collision::Terrain + ?Sized),
+    from: Vec3,
+    to: Vec3,
+) -> bool {
+    let clearance = |board| {
+        terrain
+            .raycast(
+                board + Vec3::new(0., 0.02, 0.),
+                board + Vec3::new(0., crate::collision::BODY_HEAD_HEIGHT, 0.),
+            )
+            .map(|hit| hit.fraction)
+    };
+    match (clearance(from), clearance(to)) {
+        (None, Some(_)) => true,
+        (Some(previous), Some(next)) => next + 0.0001 < previous,
+        _ => false,
+    }
+}
+
 /// The rendered course uses this same surface definition for the ramp.
 pub fn ground_height(x: f32, z: f32) -> f32 {
     if x.abs() > 3.0 {
@@ -508,6 +576,290 @@ pub fn ground_height(x: f32, z: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn obstacle_world(roof: bool) -> crate::collision::TriangleMesh {
+        let mut faces = vec![
+            [
+                Vec3::new(-10., 0., -10.),
+                Vec3::new(10., 0., -10.),
+                Vec3::new(-10., 0., 10.),
+            ],
+            [
+                Vec3::new(10., 0., -10.),
+                Vec3::new(10., 0., 10.),
+                Vec3::new(-10., 0., 10.),
+            ],
+        ];
+        if roof {
+            faces.extend([
+                [
+                    Vec3::new(-10., 2.2, -10.),
+                    Vec3::new(10., 2.2, -10.),
+                    Vec3::new(-10., 2.2, 10.),
+                ],
+                [
+                    Vec3::new(10., 2.2, -10.),
+                    Vec3::new(10., 2.2, 10.),
+                    Vec3::new(-10., 2.2, 10.),
+                ],
+            ]);
+        } else {
+            faces.extend([
+                [
+                    Vec3::new(0., 0., -10.),
+                    Vec3::new(0., 5., -10.),
+                    Vec3::new(0., 0., 10.),
+                ],
+                [
+                    Vec3::new(0., 5., -10.),
+                    Vec3::new(0., 5., 10.),
+                    Vec3::new(0., 0., 10.),
+                ],
+            ]);
+        }
+        crate::collision::TriangleMesh::from_triangles(&faces).unwrap()
+    }
+    #[test]
+    fn rising_head_contacts_roof_without_crossing_it_then_lands_once() {
+        let mesh = obstacle_world(true);
+        let world = crate::collision::SourceWorld {
+            mesh: &mesh,
+            min: Vec3::new(-10., 0., -10.),
+            max: Vec3::new(10., 3., 10.),
+        };
+        let mut skater = Skater::at_spawn(Vec3::new(0., 0.12, 0.), 0.).unwrap();
+        skater.step_on(
+            Input {
+                ollie: true,
+                ..Default::default()
+            },
+            FIXED_DT,
+            &world,
+        );
+        let mut peak = skater.position.y;
+        for _ in 0..180 {
+            skater.step_on(Input::default(), FIXED_DT, &world);
+            peak = peak.max(skater.position.y);
+            assert!(skater.position.y + crate::collision::BODY_HEAD_HEIGHT <= 2.20001);
+        }
+        assert!(peak > 0.5 && peak < 0.551);
+        assert!(skater.grounded && (skater.position.y - 0.12).abs() < 1e-5);
+        assert_eq!(skater.landings, 1);
+    }
+    #[test]
+    fn grounded_wall_contact_retains_tangential_speed_and_heading() {
+        let mesh = obstacle_world(false);
+        let world = crate::collision::SourceWorld {
+            mesh: &mesh,
+            min: Vec3::new(-10., 0., -10.),
+            max: Vec3::new(10., 5., 10.),
+        };
+        let mut skater =
+            Skater::at_spawn(Vec3::new(-1., 0.12, -2.), std::f32::consts::FRAC_PI_4).unwrap();
+        skater.speed = 6.;
+        for _ in 0..120 {
+            skater.step_on(Input::default(), FIXED_DT, &world);
+        }
+        assert!(skater.grounded && skater.position.x <= -0.1799 && skater.position.z > 1.);
+        assert!(skater.speed > 2. && skater.yaw.abs() < 0.1);
+    }
+    #[test]
+    fn grounded_uphill_motion_cannot_raise_head_through_roof() {
+        let mesh = crate::collision::TriangleMesh::from_triangles(&[
+            [
+                Vec3::new(-2., 0., 0.),
+                Vec3::new(2., 0., 0.),
+                Vec3::new(-2., 3.2, 8.),
+            ],
+            [
+                Vec3::new(2., 0., 0.),
+                Vec3::new(2., 3.2, 8.),
+                Vec3::new(-2., 3.2, 8.),
+            ],
+            [
+                Vec3::new(-2., 2., 0.),
+                Vec3::new(2., 2., 0.),
+                Vec3::new(-2., 2., 8.),
+            ],
+            [
+                Vec3::new(2., 2., 0.),
+                Vec3::new(2., 2., 8.),
+                Vec3::new(-2., 2., 8.),
+            ],
+        ])
+        .unwrap();
+        let world = crate::collision::SourceWorld {
+            mesh: &mesh,
+            min: Vec3::new(-2., 0., 0.),
+            max: Vec3::new(2., 4., 8.),
+        };
+        let mut skater = Skater::at_spawn(Vec3::new(0., 0.12, 0.), 0.).unwrap();
+        skater.speed = 4.;
+        for _ in 0..120 {
+            skater.step_on(
+                Input {
+                    push: true,
+                    ..Default::default()
+                },
+                FIXED_DT,
+                &world,
+            );
+            assert!(
+                skater.grounded
+                    && skater.position.y + crate::collision::BODY_HEAD_HEIGHT <= 2.00001
+            );
+            assert!((skater.position.y - (0.4 * skater.position.z + 0.12)).abs() < 1e-4);
+        }
+        assert!(skater.position.z > 0.4 && skater.position.z < 0.58);
+    }
+    #[test]
+    fn grounded_entry_into_low_overhang_stops_before_body_overlap() {
+        let mut faces = vec![
+            [
+                Vec3::new(-2., 0., -3.),
+                Vec3::new(2., 0., -3.),
+                Vec3::new(-2., 0., 8.),
+            ],
+            [
+                Vec3::new(2., 0., -3.),
+                Vec3::new(2., 0., 8.),
+                Vec3::new(-2., 0., 8.),
+            ],
+        ];
+        faces.extend([
+            [
+                Vec3::new(-2., 1.6, 0.),
+                Vec3::new(2., 1.6, 0.),
+                Vec3::new(-2., 1.6, 8.),
+            ],
+            [
+                Vec3::new(2., 1.6, 0.),
+                Vec3::new(2., 1.6, 8.),
+                Vec3::new(-2., 1.6, 8.),
+            ],
+        ]);
+        let mesh = crate::collision::TriangleMesh::from_triangles(&faces).unwrap();
+        let world = crate::collision::SourceWorld {
+            mesh: &mesh,
+            min: Vec3::new(-2., 0., -3.),
+            max: Vec3::new(2., 2., 8.),
+        };
+        let mut skater = Skater::at_spawn(Vec3::new(0., 0.12, -1.), 0.).unwrap();
+        skater.speed = 6.;
+        for _ in 0..120 {
+            skater.step_on(
+                Input {
+                    push: true,
+                    ..Default::default()
+                },
+                FIXED_DT,
+                &world,
+            );
+        }
+        assert!(skater.grounded && skater.position.z < 0. && skater.speed == 0.);
+    }
+    fn low_overhang(slope: f32) -> crate::collision::TriangleMesh {
+        let a = Vec3::new(-2., 0., -3.);
+        let b = Vec3::new(2., 0., -3.);
+        let c = Vec3::new(-2., 0., 4.);
+        let d = Vec3::new(2., 0., 4.);
+        let e = Vec3::new(-2., 1.5, 0.);
+        let f = Vec3::new(2., 1.5, 0.);
+        let g = Vec3::new(-2., 1.5 + slope * 2., 2.);
+        let h = Vec3::new(2., 1.5 + slope * 2., 2.);
+        crate::collision::TriangleMesh::from_triangles(&[
+            [a, b, c],
+            [b, d, c],
+            [e, f, g],
+            [f, h, g],
+        ])
+        .unwrap()
+    }
+    #[test]
+    fn airborne_horizontal_entry_cannot_land_inside_a_low_overhang() {
+        let mesh = low_overhang(0.);
+        let world = crate::collision::SourceWorld {
+            mesh: &mesh,
+            min: Vec3::new(-2., 0., -3.),
+            max: Vec3::new(2., 2., 4.),
+        };
+        let mut skater = Skater::at_spawn(Vec3::new(0., 0.5, -0.2), 0.).unwrap();
+        skater.grounded = false;
+        skater.vertical_speed = -1.;
+        skater.speed = 4.;
+        for _ in 0..120 {
+            skater.step_on(Input::default(), FIXED_DT, &world);
+            assert!(skater.position.z < 0., "Side entry would overlap the roof");
+        }
+        assert!(skater.grounded && (skater.position.y - 0.12).abs() < 1e-6);
+        assert_eq!(skater.landings, 1);
+        assert_eq!(skater.combo.value(), 0);
+    }
+    #[test]
+    fn existing_body_overlap_can_escape_in_small_steps_without_depenetration() {
+        let mesh = low_overhang(0.);
+        let world = crate::collision::SourceWorld {
+            mesh: &mesh,
+            min: Vec3::new(-2., 0., -3.),
+            max: Vec3::new(2., 2., 4.),
+        };
+        let mut skater = Skater::at_spawn(Vec3::new(0., 0.12, 0.5), std::f32::consts::PI).unwrap();
+        skater.speed = 3.;
+        for _ in 0..60 {
+            let before = skater.position;
+            skater.step_on(Input::default(), FIXED_DT, &world);
+            assert!(skater.position.z < before.z);
+            assert!((skater.position.y - 0.12).abs() < 1e-6 && skater.grounded);
+            assert!((skater.position - before).dot(skater.position - before) < 0.001);
+        }
+        assert!(skater.position.z < 0.);
+        assert_eq!(skater.landings, 0);
+    }
+    #[test]
+    fn existing_overlap_allows_better_clearance_but_rejects_deeper_entry() {
+        let mesh = low_overhang(-0.2);
+        let world = crate::collision::SourceWorld {
+            mesh: &mesh,
+            min: Vec3::new(-2., 0., -3.),
+            max: Vec3::new(2., 2., 4.),
+        };
+        let start = Vec3::new(0., 0.12, 0.5);
+        let mut skater = Skater::at_spawn(start, 0.).unwrap();
+        skater.speed = 3.;
+        skater.step_on(Input::default(), FIXED_DT, &world);
+        assert_eq!(skater.position, start);
+        assert_eq!(skater.speed, 0.);
+        skater.yaw = std::f32::consts::PI;
+        skater.speed = 3.;
+        skater.step_on(Input::default(), FIXED_DT, &world);
+        assert!(skater.position.z < start.z && skater.position.y == start.y);
+    }
+    #[test]
+    fn airborne_wall_slide_keeps_tangent_when_clean_landing_reconciles_stance() {
+        let mesh = obstacle_world(false);
+        let world = crate::collision::SourceWorld {
+            mesh: &mesh,
+            min: Vec3::new(-10., 0., -10.),
+            max: Vec3::new(10., 5., 10.),
+        };
+        let mut skater =
+            Skater::at_spawn(Vec3::new(-0.6, 0.12, -2.), std::f32::consts::FRAC_PI_4).unwrap();
+        skater.speed = 6.;
+        skater.step_on(
+            Input {
+                ollie: true,
+                ..Default::default()
+            },
+            FIXED_DT,
+            &world,
+        );
+        for _ in 0..120 {
+            skater.step_on(Input::default(), FIXED_DT, &world);
+        }
+        assert!(skater.grounded && skater.position.x <= -0.1799 && skater.position.z > 1.);
+        assert!(skater.speed > 2. && skater.yaw.abs() < 0.1);
+        assert_eq!(skater.landings, 1);
+        assert_eq!(skater.last_trick, "Ollie landed");
+    }
     fn source_floor(x0: f32, x1: f32, z0: f32, z1: f32, y: f32) -> crate::collision::TriangleMesh {
         crate::collision::TriangleMesh::from_triangles(&[
             [

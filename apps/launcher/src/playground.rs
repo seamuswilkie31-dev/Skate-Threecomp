@@ -38,8 +38,7 @@ pub struct Playground {
     pending_ollie: bool,
     pending_flip: bool,
     controllers: crate::controllers::Controllers,
-    camera: Vec3,
-    target: Vec3,
+    camera: crate::camera::FollowCamera,
     target_format: Option<eframe::wgpu::TextureFormat>,
     source: Option<PathBuf>,
     sample: Option<ImportedSample>,
@@ -56,8 +55,7 @@ pub struct Playground {
 impl Default for Playground {
     fn default() -> Self {
         let skater = Skater::default();
-        let camera = skater.position + Vec3::new(0.0, 3.5, -7.0);
-        let target = skater.position + Vec3::new(0.0, 0.8, 2.0);
+        let camera = crate::camera::FollowCamera::new(skater.position, skater.travel_direction());
         Self {
             skater,
             accumulator: 0.0,
@@ -65,7 +63,6 @@ impl Default for Playground {
             pending_flip: false,
             controllers: crate::controllers::Controllers::default(),
             camera,
-            target,
             target_format: None,
             source: None,
             sample: None,
@@ -247,8 +244,8 @@ impl Playground {
         });
     }
     fn reset_camera(&mut self) {
-        self.camera = self.skater.position + v(0.0, 3.5, -7.0);
-        self.target = self.skater.position + v(0.0, 0.8, 2.0);
+        self.camera
+            .reset(self.skater.position, self.skater.travel_direction());
     }
     /// Return false when the player asks to return to the launcher.
     pub fn update(&mut self, ctx: &egui::Context) -> bool {
@@ -414,6 +411,7 @@ impl Playground {
         egui::TopBottomPanel::bottom("prototype_controls").show(ctx, |ui| {
             ui.label(if self.source_skating {"W/S Push/brake · A/D Steer · Space Ollie · F Flip · Q/E Spin · R Restart source route"}else{"W/S Push/brake · A/D Steer/balance · Space Ollie/pop · F Flip · Q/E Spin · Hold G Grind · R Reset"});
             ui.small(if self.source_skating {"Pad: stick Steer · A Push · B Brake · X Ollie · Y Flip · LB/RB Spin · Start Restart · Back Launcher"}else{"Pad: stick Steer/balance · A Push · B Brake · X Ollie/pop · Y Flip · LB/RB Spin · Hold LT Grind · Start Reset · Back Launcher"});
+            ui.small("Camera: right-drag / pad right stick Orbit · wheel Zoom · C / right-stick click Recenter");
             ui.horizontal(|ui| {
                 ui.strong(if self.source_skating {format!("{:.1} source units/s",self.skater.speed)}else{format!("{:.1} km/h", self.skater.speed * 3.6)});
                 ui.separator();
@@ -449,7 +447,7 @@ impl Playground {
                 });
             }
         });
-        let (dt, focused, reset, escape, jump, flip, mut input) = ctx.input(|i| {
+        let (dt, focused, reset, escape, jump, flip, camera_reset, mut input) = ctx.input(|i| {
             let left = i.key_down(egui::Key::A) || i.key_down(egui::Key::ArrowLeft);
             let right = i.key_down(egui::Key::D) || i.key_down(egui::Key::ArrowRight);
             (
@@ -459,6 +457,7 @@ impl Playground {
                 i.key_pressed(egui::Key::Escape),
                 i.key_pressed(egui::Key::Space),
                 i.key_pressed(egui::Key::F),
+                i.key_pressed(egui::Key::C),
                 Input {
                     push: i.key_down(egui::Key::W) || i.key_down(egui::Key::ArrowUp),
                     brake: i.key_down(egui::Key::S) || i.key_down(egui::Key::ArrowDown),
@@ -528,13 +527,6 @@ impl Playground {
                 self.pending_flip = false;
                 self.accumulator -= FIXED_DT;
             }
-            let blend = 1.0 - (-6.0 * dt).exp();
-            // Keep the follow camera steady while the rider spins in the air.
-            let heading = self.skater.travel_direction();
-            let desired = self.skater.position - heading * 7.0 + Vec3::new(0.0, 3.5, 0.0);
-            self.camera = self.camera + (desired - self.camera) * blend;
-            let target = self.skater.position + heading * 2.0 + Vec3::new(0.0, 0.8, 0.0);
-            self.target = self.target + (target - self.target) * blend;
         } else {
             self.pending_ollie = false;
             self.pending_flip = false;
@@ -544,9 +536,55 @@ impl Playground {
             .frame(egui::Frame::NONE)
             .show(ctx, |ui| {
                 let rect = ui.available_rect_before_wrap();
+                let view =
+                    ui.interact(rect, ui.id().with("camera_orbit_view"), egui::Sense::drag());
+                let (mouse, zoom) = ctx.input(|i| {
+                    (
+                        if view.dragged_by(egui::PointerButton::Secondary) {
+                            i.pointer.delta()
+                        } else {
+                            Vec2::ZERO
+                        },
+                        if view.hovered() {
+                            i.smooth_scroll_delta.y
+                        } else {
+                            0.
+                        },
+                    )
+                });
+                if focused && playing {
+                    let world = World {
+                        mesh: self.sample.as_ref().map(|s| &s.collision),
+                    };
+                    let source = self
+                        .sample
+                        .as_ref()
+                        .and_then(|s| s.source_environment.as_ref())
+                        .map(|s| s.terrain());
+                    let terrain: &dyn Terrain = if self.source_skating {
+                        source.as_ref().expect("Verified source camera terrain")
+                    } else {
+                        &world
+                    };
+                    self.camera.update(
+                        self.skater.position,
+                        self.skater.travel_direction(),
+                        crate::camera::CameraInput {
+                            orbit: [
+                                mouse.x * 0.006 + controller.camera_look[0] * 2. * dt,
+                                mouse.y * 0.006 - controller.camera_look[1] * 1.4 * dt,
+                            ],
+                            zoom,
+                            recenter: camera_reset || controller.camera_reset,
+                        },
+                        dt,
+                        rect.width() / rect.height().max(1.),
+                        terrain,
+                    );
+                }
                 let painter = ui.painter_at(rect);
                 painter.rect_filled(rect, 0.0, Color32::from_rgb(126, 160, 177));
-                let mut scene = Scene::new(rect, self.camera, self.target);
+                let mut scene = Scene::new(rect, self.camera.eye, self.camera.target);
                 if !self.source_skating {
                     for x in -10..10 {
                         for z in -20..20 {
@@ -673,51 +711,54 @@ impl Playground {
                         [51, 64, 62],
                     );
                 }
-                let roll = self.skater.board_roll;
-                scene.cuboid_rolled(p, v(0.28, 0.09, 0.88), yaw, roll, [194, 239, 97]);
-                for dx in [-0.18, 0.18] {
-                    for dz in [-0.29, 0.29] {
-                        scene.cuboid_rolled(
-                            p + rotate(roll_point(v(dx, -0.065, dz), roll), yaw),
-                            v(0.1, 0.1, 0.12),
+                let camera_distance = self.camera.eye - (p + v(0., 1.1, 0.));
+                if camera_distance.dot(camera_distance) > 0.75 * 0.75 {
+                    let roll = self.skater.board_roll;
+                    scene.cuboid_rolled(p, v(0.28, 0.09, 0.88), yaw, roll, [194, 239, 97]);
+                    for dx in [-0.18, 0.18] {
+                        for dz in [-0.29, 0.29] {
+                            scene.cuboid_rolled(
+                                p + rotate(roll_point(v(dx, -0.065, dz), roll), yaw),
+                                v(0.1, 0.1, 0.12),
+                                yaw,
+                                roll,
+                                [33, 39, 41],
+                            );
+                        }
+                    }
+                    for dz in [-0.22, 0.22] {
+                        scene.cuboid(
+                            p + rotate(v(0.0, 0.35, dz), yaw),
+                            v(0.18, 0.55, 0.18),
                             yaw,
-                            roll,
-                            [33, 39, 41],
+                            [44, 58, 77],
                         );
                     }
-                }
-                for dz in [-0.22, 0.22] {
+                    let lean = self
+                        .skater
+                        .grind
+                        .as_ref()
+                        .map_or(input.steer * 0.12, |g| g.balance * 0.22);
                     scene.cuboid(
-                        p + rotate(v(0.0, 0.35, dz), yaw),
-                        v(0.18, 0.55, 0.18),
+                        p + rotate(v(lean, 0.94, 0.0), yaw),
+                        v(0.45, 0.65, 0.3),
                         yaw,
-                        [44, 58, 77],
+                        [225, 123, 89],
                     );
-                }
-                let lean = self
-                    .skater
-                    .grind
-                    .as_ref()
-                    .map_or(input.steer * 0.12, |g| g.balance * 0.22);
-                scene.cuboid(
-                    p + rotate(v(lean, 0.94, 0.0), yaw),
-                    v(0.45, 0.65, 0.3),
-                    yaw,
-                    [225, 123, 89],
-                );
-                scene.cuboid(
-                    p + rotate(v(lean, 1.43, 0.0), yaw),
-                    v(0.28, 0.29, 0.28),
-                    yaw,
-                    [234, 203, 163],
-                );
-                for dx in [-0.32, 0.32] {
                     scene.cuboid(
-                        p + rotate(v(dx + lean, 0.89, 0.0), yaw),
-                        v(0.15, 0.5, 0.15),
+                        p + rotate(v(lean, 1.43, 0.0), yaw),
+                        v(0.28, 0.29, 0.28),
                         yaw,
                         [234, 203, 163],
                     );
+                    for dx in [-0.32, 0.32] {
+                        scene.cuboid(
+                            p + rotate(v(dx + lean, 0.89, 0.0), yaw),
+                            v(0.15, 0.5, 0.15),
+                            yaw,
+                            [234, 203, 163],
+                        );
+                    }
                 }
                 if let Some(sample) = &self.sample {
                     let imported = sample;

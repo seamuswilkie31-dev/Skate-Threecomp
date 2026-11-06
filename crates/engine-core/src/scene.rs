@@ -767,8 +767,8 @@ mod tests {
         }
         assert!(skater.grounded && (skater.position.y - placement.y).abs() < 0.001);
         let textured = patch.mesh_layers.iter().filter(|&&layer| layer > 0).count();
-        assert_eq!(textured, 54);
-        assert_eq!(patch.assets.len(), 13);
+        assert_eq!(textured, 57);
+        assert_eq!(patch.assets.len(), 15);
         assert!(
             patch
                 .mesh_layers

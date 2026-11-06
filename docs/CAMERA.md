@@ -1,0 +1,11 @@
+# Follow camera and obstacle clearance
+
+The original Rust camera follows travel direction, so a body spin does not swing the view around. Hold the right mouse button and drag inside the viewport, or use the controller's right stick, to orbit. Scroll over the viewport to zoom. **C** or a right-stick click restores the default orbit, pitch, and distance without resetting the rider. Losing focus pauses camera input and simulation. Mouse controls apply inside the viewport; the controller can operate while the viewport is visible.
+
+The default distance is 7.5 units with a pitch of 0.33 radians. Zoom is bounded to 2–12 units and pitch to 0.08–1.15 radians. These are prototype units; source mode retains the uncalibrated game vertex spacing. Position and look target approach their desired values smoothly. Camera orbit changes view state only, leaving steering, air travel, trick rotation, and scoring unchanged.
+
+Imported geometry supplies two-sided segment raycasts. A center ray and four parallel offset rays approximate clearance between a pivot 1.1 units above the board and the camera. The offsets include a margin around the projected near-plane footprint for landscape and portrait views. An obstruction pulls the camera inward immediately; clearing it lets the camera ease outward. The original procedural course also supplies a height-field floor guard. The placeholder rider is hidden when the camera is within 0.75 units of its pivot, preventing the blocks from filling the view in tight spaces.
+
+This is a bounded five-ray approximation, not a swept sphere or a complete camera collision volume. Thin edges, corners between the probes, a pivot already inside geometry, and unusual imported surfaces can still cause clipping. The same render triangles feed camera queries and simplified riding collision; the original game's camera rules and collision data remain unverified. Full scene loading is also incomplete.
+
+Synthetic checks cover immediate pull-in, smooth release, an off-center obstacle missed by the center ray, orbit and zoom limits, recentering, invalid frame time, and portrait clearance sizing. The explicit source-scale GPU test renders the real neighborhood using this camera's collision-adjusted pose. Manual visual interaction with the latest UI remains pending.

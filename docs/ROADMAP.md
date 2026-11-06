@@ -42,6 +42,7 @@
 
 - [x] Render an original test course through the launcher's native `wgpu` backend.
 - [x] Add a follow camera, keyboard push/brake/steering, and ollies.
+- [x] Add mouse/controller camera orbit, wheel zoom, recentering, and bounded obstacle-clearance probes.
 - [x] Implement fixed-step movement, ramp contact, gravity, and landing tracking.
 - [x] Add native controller input with hotplugging, dead zones, and focus-safe button edges.
 - [x] Animate board flips and detect clean flip/spin landings, switch stance, scores, and simple bails.
@@ -52,10 +53,12 @@
 - [x] Connect a bounded real-game mesh sample to a native visual preview.
 - [x] Connect the imported sample to shallow-surface support and swept wall probes with shared render transforms.
 - [x] Add a mesh placement action and verify an ollie/landing on the real imported sample.
-- [ ] Improve full-body collision, ceiling contact, sliding, and original game collision-format support.
+- [x] Add wall sliding, upward head/ceiling contact, and grounded headroom checks to the probe-based collision model.
+- [ ] Improve full-body collision, rounded edge contacts, and original game collision-format support.
 - [x] Inspect observed 2D texture descriptors and Xenos fetch metadata.
 - [x] Bind four local diffuse textures to six sample meshes and preview a decoded lightmap.
-- [x] Assemble seven selected neighboring static batches with shared placement (110 meshes, 11,602 render triangles, 54 textured meshes).
+- [x] Assemble seven selected neighboring static batches with shared placement (110 meshes, 11,602 render triangles, 57 textured meshes).
+- [x] Decode verified BC1 base levels with a separately bounded local mip region; retain unsupported packed-tail fallbacks.
 - [x] Add source-scale skating with translation-only geometry, source-only support/bounds, verified route start, and gap recovery that preserves banked points.
 - [ ] Resolve the remaining material keys, packed base tails, other formats, and mip levels.
 - [ ] Verify lightmap coordinates, original lighting, scene transforms, and complete scene assembly.

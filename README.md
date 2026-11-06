@@ -8,7 +8,7 @@ This repository is an independent project. It does not contain or use code from 
 
 An early native skating prototype is now available. Click **Open skating prototype** in the launcher, or run `cargo run -p skate-threecomp-launcher -- --prototype`. Push, steer, brake, and ollie around an original ramp course with a follow camera. It uses placeholder shapes and an original movement model; game-world loading and Skate 3 gameplay reconstruction remain in development. The prototype needs no game files. See [controls and scope](docs/GAMEPLAY.md).
 
-The prototype now accepts controller input and includes board flips, airborne spins, clean-landing scoring, switch stance, and a simple bail/recovery state. On keyboard, use **F** to flip and **Q/E** to spin after an ollie. The HUD shows controller status and the latest trick result.
+The prototype now accepts controller input and includes board flips, airborne spins, clean-landing scoring, switch stance, and a simple bail/recovery state. On keyboard, use **F** to flip and **Q/E** to spin after an ollie. The HUD shows controller status and the latest trick result. Right-drag or use the pad's right stick to orbit, scroll over the viewport to zoom, and press **C** or click the right stick to recenter. Imported geometry supplies camera clearance, wall sliding, and simplified head contacts. See [camera controls and limits](docs/CAMERA.md).
 
 Click **Rail practice** to approach a yellow rail. Hold **G** (pad **LT**) and tap **Space** (pad **X**) to hop onto it; use A/D or the stick to balance, then Space/X to pop off. Tricks and grinds link into a pending chain that banks after 1.5 seconds of clean riding. Bails lose the pending chain and preserve banked points. These are original prototype systems; see [rail controls and scoring](docs/GAMEPLAY.md).
 
@@ -51,7 +51,7 @@ cargo run -p skate-threecomp-launcher --bin skate-threecomp-inspect -- "D:\Games
 cargo run -p skate-threecomp-launcher --bin skate-threecomp-inspect -- "D:\Games\Skate 3.iso" --decode-block "data/content/worldDIST_DownTown.big" "data/content/world/stream/DIST_DownTown/cSim_50_450_high.xsf" 0
 ```
 
-These diagnostic modes do not write decoded game assets to disk. Type-specific readers currently render one narrow `RW4` geometry and diffuse-texture sample. See [stream notes](docs/STREAMS.md) for the observed layout and validation scope.
+These diagnostic modes do not write decoded game assets to disk. Type-specific readers render selected `RW4` static geometry and diffuse textures, including the initial sample and seven-batch neighborhood. See [stream notes](docs/STREAMS.md) for the observed layout and validation scope.
 
 The observed Xbox 360 RW4 object dictionary can also be inspected after decoding a stream block:
 
@@ -73,7 +73,7 @@ Save data is stored under the platform's local application data directory:
 
 ## Neighborhood skating and preview
 
-**Skate neighborhood** loads seven selected Downtown batches at source spacing: 110 meshes, 15,703 vertices, and 11,602 triangles. Thirteen decoded diffuse textures cover 54 meshes; 56 remain plain. Source mode uses imported surfaces and movement bounds, with recovery to a verified route start when geometry is missing. **Load neighborhood preview** retains the miniature inspection view. See [source skating controls](docs/SOURCE_SKATING.md) and [selected batches and limits](docs/NEIGHBORHOOD.md). The inspector's `--neighborhood-sample` option reports the selected batches, bounds, geometry/collision counts, texture coverage, and optional warnings without exporting assets.
+**Skate neighborhood** loads seven selected Downtown batches at source spacing: 110 meshes, 15,703 vertices, and 11,602 triangles. Fifteen decoded diffuse textures cover 57 meshes; 53 remain plain. Source mode uses imported surfaces and movement bounds, with recovery to a verified route start when geometry is missing. **Load neighborhood preview** retains the miniature inspection view. See [source skating controls](docs/SOURCE_SKATING.md) and [selected batches and limits](docs/NEIGHBORHOOD.md). The inspector's `--neighborhood-sample` option reports the selected batches, bounds, geometry/collision counts, texture coverage, and optional warnings without exporting assets.
 
 ## Build
 

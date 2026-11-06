@@ -469,7 +469,17 @@ mod tests {
                 assert_eq!(patch.geometry.meshes.len(), 110);
                 if source_scale {
                     let environment = patch.source_environment().unwrap();
-                    source_view = Some((environment.placement, environment.spawn));
+                    let heading = threecomp_engine_core::skating::Vec3::new(0., 0., 1.);
+                    let mut follow = crate::camera::FollowCamera::new(environment.spawn, heading);
+                    follow.update(
+                        environment.spawn,
+                        heading,
+                        crate::camera::CameraInput::default(),
+                        1. / 60.,
+                        1.,
+                        &environment.terrain(),
+                    );
+                    source_view = Some((environment.placement, follow.eye, follow.target));
                 }
                 (patch.geometry, patch.assets, patch.mesh_layers)
             } else {
@@ -515,7 +525,7 @@ mod tests {
                 for &index in &mesh.indices {
                     let p = source_view.map_or_else(
                         || (mesh.positions[index as usize] - center) * scale,
-                        |(placement, _)| placement.apply(mesh.positions[index as usize]),
+                        |(placement, _, _)| placement.apply(mesh.positions[index as usize]),
                     );
                     vertices.push(Vertex {
                         position: [p.x, p.y, p.z],
@@ -536,11 +546,9 @@ mod tests {
                 .unwrap();
             device.push_error_scope(wgpu::ErrorFilter::Validation);
             let mut renderer = Renderer::new(&device, wgpu::TextureFormat::Rgba8Unorm);
-            assert_eq!(textured_meshes, if neighborhood { 54 } else { 6 });
+            assert_eq!(textured_meshes, if neighborhood { 57 } else { 6 });
             renderer.set_textures(&device, &queue, Some(&TextureSet::from_assets(&assets)));
-            let camera = if let Some((_, spawn)) = source_view {
-                let eye = spawn + threecomp_engine_core::skating::Vec3::new(0., 3.5, -7.);
-                let target = spawn + threecomp_engine_core::skating::Vec3::new(0., 0.8, 2.);
+            let camera = if let Some((_, eye, target)) = source_view {
                 let forward = (target - eye).normalized();
                 let right = threecomp_engine_core::skating::Vec3::new(0., 1., 0.)
                     .cross(forward)

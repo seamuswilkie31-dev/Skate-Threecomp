@@ -21,7 +21,11 @@ The miniature uses one uniform placement fitting the combined bounds into 16 uni
 
 ## Materials and loading limits
 
-Thirteen supported diffuse payloads cover 54 of the 110 meshes. The other 56 remain plain because their local texture is absent or unsupported. Five optional decoder warnings and the selected member/block list appear under **Loaded source details**. Lightmap pixels remain available in the separate texture preview. Their shader coordinate interpretation is unverified, so lightmaps are not applied to lighting.
+Fifteen supported diffuse payloads cover 57 of the 110 meshes. The other 53 remain plain because their local texture is absent or unsupported. Two optional decoder warnings and the selected member/block list appear under **Loaded source details**. Lightmap pixels remain available in the separate texture preview. Their shader coordinate interpretation is unverified, so lightmaps are not applied to lighting.
+
+Three meshes use the newly verified 512 × 256 BC1 bases: key `2C70170A000D01B1` in `450_50` block 3 and `450_150` block 7, and key `2C70170A001D0183` in `450_150` block 2. Their identical base/resource layouts keep mip zero separate from a bounded local mip region. Only base pixels are decoded; the first lower mip's allocation is checked for capacity, and the complete mip chain remains unvalidated. See [exact records, checksums, and limits](TEXTURES.md#neighborhood-bc1-bases-with-separate-mip-data).
+
+The two remaining warnings identify RGBA8 records in `cPres_450_50_high.xsf`, blocks 7 and 8. Their byte order, packed-base placement, and alpha/material behavior need separate decoder work. Other unresolved references remain plain without a decoder warning.
 
 References resolve within each source member. Identical key/dimension/pixel payloads may share a texture-array layer; same-key local variants remain separate. Unresolved references do not borrow unrelated cells' textures. Duplicate local definitions are ambiguous and kept plain. Up to 64 diffuse assets plus the white fallback layer fit the renderer, with the existing 64 × 64 normalized preview layers.
 
@@ -29,7 +33,7 @@ The worker indexes the disc/archive once. Required geometry errors abort the new
 
 ## Verification
 
-Synthetic checks cover declarations, padded material tables, native seams, shared placement, texture variants, optional codec failures and budgets, source-only holes and bounds, stale grounded state, recovery scoring, and exclusion of invisible course rails. ISO tests check selected counts, texture-layer bounds, placement, a 20.024-source-unit ride across a cell boundary, and an ollie landing. Native GPU tests render both the miniature and source-scale neighborhood from a skating camera. A synthetic layer-10 test also verifies repeating UVs, depth, and compositing. Visual UI interaction is recorded separately from these GPU checks.
+Synthetic checks cover declarations, padded material tables, native seams, shared placement, texture variants, bounded BC1 mip regions, optional codec failures and budgets, source-only holes and bounds, stale grounded state, recovery scoring, and exclusion of invisible course rails. ISO tests check selected counts, 57 textured meshes and 15 assets, both new BC1 base checksums, texture-layer bounds, placement, a 20.024-source-unit ride across a cell boundary, and an ollie landing. The original lightmap checksum remains unchanged. Native GPU tests render both the miniature and source-scale neighborhood from a skating camera. A synthetic layer-10 test also verifies repeating UVs, depth, and compositing. Visual UI interaction is recorded separately from these GPU checks.
 
 ```powershell
 cargo run -p skate-threecomp-launcher --bin skate-threecomp-inspect -- "D:\Games\Skate 3.iso" --neighborhood-sample

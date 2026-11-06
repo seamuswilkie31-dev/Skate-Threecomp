@@ -20,7 +20,7 @@ Select the inspected ISO in the launcher, enter the skating prototype, then clic
 
 The inspector's `--mesh-sample` option invokes the same loader and emits counts and bounds as JSON, without exporting vertices.
 
-The separate [neighborhood preview](NEIGHBORHOOD.md) combines seven selected batches using one placement, preserving their native border coordinates. It contains 110 meshes and 11,602 render triangles, with 54 meshes using thirteen local diffuse payloads. A separate source-skating mode keeps scale 1.0 and shares translation-only placement between rendering and source-only collision. `--neighborhood-sample` reports its coverage and warnings. It does not imply complete scene assembly or support for all nearby batches.
+The separate [neighborhood preview](NEIGHBORHOOD.md) combines seven selected batches using one placement, preserving their native border coordinates. It contains 110 meshes and 11,602 render triangles, with 57 meshes using fifteen local diffuse payloads. A separate source-skating mode keeps scale 1.0 and shares translation-only placement between rendering and source-only collision. `--neighborhood-sample` reports its coverage and warnings. It does not imply complete scene assembly or support for all nearby batches.
 
 ## Native rendering path
 
@@ -28,7 +28,7 @@ Original WGSL shaders project world vertices and sample a diffuse texture array 
 
 ## Validation
 
-Synthetic tests cover a known triangle, padding, object links, unsupported declarations/topologies, half-float UVs, non-finite coordinates, truncated draw records, and invalid indexes. Native GPU tests were run explicitly on an NVIDIA GeForce RTX 5060 Ti. One verifies texture-layer selection, repeating UVs, near-over-far occlusion, and compositing. The other loads the actual retail sample, resolves six textured meshes, submits its 413 triangles, and reads back visible pixels with no wgpu validation errors. These checks do not require desktop capture or distribute game data.
+Synthetic tests cover a known triangle, padding, object links, unsupported declarations/topologies, half-float UVs, non-finite coordinates, truncated draw records, and invalid indexes. Four native GPU tests were run explicitly on an NVIDIA GeForce RTX 5060 Ti. They verify texture-layer selection, repeating UVs, near-over-far occlusion, compositing, the nine-mesh retail sample, the 110-mesh neighborhood preview, and the source-scale scene from its collision-adjusted follow camera. Both neighborhood views resolve 57 textured meshes. All read back visible pixels with no wgpu validation errors. These checks do not require desktop capture or distribute game data.
 
 The GPU tests are ignored in ordinary `cargo test --workspace` runs because they require hardware, and the retail test also requires `THREECOMP_TEST_ISO` pointing to the local image. To run them on a development machine:
 

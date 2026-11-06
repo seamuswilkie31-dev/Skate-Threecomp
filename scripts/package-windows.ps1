@@ -266,6 +266,8 @@ SKATE THREECOMP - PORTABLE WINDOWS PROTOTYPE
    Use A/D or the left stick to balance on the rail; Space / X pops off.
 4. W/S push/brake, A/D steer, Space ollie, F flip, Q/E air spin, R reset.
    Controller: A push, B brake, X ollie, Y flip, LB/RB spin, Start reset.
+5. Camera: right-drag in the viewport or pad right stick to orbit.
+   Scroll over the viewport to zoom; C / right-stick click to recenter.
 
 Your own ISO is needed for Load game mesh sample, Load neighborhood preview,
 Skate neighborhood, and Load texture sample. Skate neighborhood uses source
